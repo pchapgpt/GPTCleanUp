@@ -185,8 +185,8 @@
             100% { transform: rotate(360deg); }
         }
 
-        /* --- Delete mode compact toolbar --- */
-        .delete-toolbar-row {
+        /* --- Cleanup mode compact toolbar --- */
+        .cleanup-toolbar-row {
             display: flex;
             align-items: center;
             padding: 2px 0;
@@ -215,31 +215,43 @@
             color: #666;
         }
 
-        /* --- Bottom delete button --- */
-        .button-danger-bottom {
+        /* --- Bottom action buttons (archive + delete) --- */
+        .cleanup-actions-row {
+            display: flex;
+            gap: 8px;
+            margin: 4px 0 0;
+        }
+        .button-action {
+            flex: 1;
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 100%;
             height: 36px;
             padding: 6px 12px;
-            margin: 4px 0 0;
             border: none;
             border-radius: 10px;
-            font-size: 14px;
+            font-size: 13px;
             font-family: inherit;
             cursor: pointer;
-            background-color: rgba(220, 53, 69, 0.8);
             color: #fff;
             transition: background-color 0.15s;
         }
-        .button-danger-bottom:hover {
-            background-color: rgba(220, 53, 69, 1);
-        }
-        .button-danger-bottom:disabled {
+        .button-action:disabled {
             background-color: #2f2f2f;
             color: #555;
             cursor: not-allowed;
+        }
+        .button-action-archive {
+            background-color: rgba(16, 163, 127, 0.6);
+        }
+        .button-action-archive:hover:not(:disabled) {
+            background-color: rgba(16, 163, 127, 0.8);
+        }
+        .button-action-delete {
+            background-color: rgba(220, 53, 69, 0.6);
+        }
+        .button-action-delete:hover:not(:disabled) {
+            background-color: rgba(220, 53, 69, 0.8);
         }
 
         /* --- Checkbox items (delete mode) --- */
@@ -344,7 +356,6 @@
         }
         #confirmDialog h3 {
             margin: 0 0 8px 0;
-            color: #ff6b7a;
             font-size: 15px;
             font-weight: 600;
         }
@@ -406,11 +417,17 @@
         #confirmCancel:hover {
             background-color: #444;
         }
-        #confirmDelete {
+        #confirmAction {
             background-color: rgba(220, 53, 69, 0.8);
         }
-        #confirmDelete:hover {
+        #confirmAction:hover {
             background-color: rgba(220, 53, 69, 1);
+        }
+        #confirmAction.confirm-archive {
+            background-color: rgba(16, 163, 127, 0.8);
+        }
+        #confirmAction.confirm-archive:hover {
+            background-color: rgba(16, 163, 127, 1);
         }
 
         /* --- Divider --- */
@@ -588,12 +605,12 @@
 
         <!-- Browse mode toolbar -->
         <div id="browseToolbar">
-            <button id="deleteModeButton" class="button button-subtle">Delete Mode</button>
+            <button id="cleanupModeButton" class="button button-subtle">Cleanup Mode</button>
         </div>
 
-        <!-- Delete mode toolbar (hidden by default) -->
-        <div id="deleteToolbar" style="display: none;">
-            <div class="delete-toolbar-row">
+        <!-- Cleanup mode toolbar (hidden by default) -->
+        <div id="cleanupToolbar" style="display: none;">
+            <div class="cleanup-toolbar-row">
                 <button id="browseButton" class="button-inline">&larr; Back</button>
                 <span id="selectionCounter"><span id="selectedCount">0</span> selected</span>
                 <button id="selectAllButton" class="button-inline">Select All</button>
@@ -603,13 +620,18 @@
         <input type="text" id="searchInput" placeholder="Search conversations...">
 
         <div id="deletionProgress">
-            <p class="progress-title">Deleting...</p>
+            <p class="progress-title" id="progressTitle">Processing...</p>
             <p class="progress-status" id="deletionStatus">Preparing...</p>
         </div>
 
         <div id="result" class="results-container"></div>
 
-        <button id="deleteSelectedButton" class="button button-danger-bottom" style="display: none;" disabled>Delete Selected</button>
+        <div id="cleanupActions" style="display: none;">
+            <div class="cleanup-actions-row">
+                <button id="archiveSelectedButton" class="button-action button-action-archive" disabled>Archive</button>
+                <button id="deleteSelectedButton" class="button-action button-action-delete" disabled>Delete</button>
+            </div>
+        </div>
     </div>
 
     <div id="loading">
@@ -623,12 +645,12 @@
     <!-- Confirmation modal -->
     <div id="confirmOverlay">
         <div id="confirmDialog">
-            <h3>Confirm Deletion</h3>
+            <h3 id="confirmTitle">Confirm</h3>
             <p class="confirm-count" id="confirmCount"></p>
             <div class="confirm-list" id="confirmList"></div>
             <div class="confirm-buttons">
                 <button id="confirmCancel">Cancel</button>
-                <button id="confirmDelete">Delete</button>
+                <button id="confirmAction">Confirm</button>
             </div>
         </div>
     </div>

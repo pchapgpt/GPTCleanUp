@@ -4,6 +4,7 @@ let deleteMode = false;
 let selectedIds = new Set();
 let currentData = [];
 let pendingDeleteIds = [];
+let pendingAction = 'delete'; // 'delete' or 'archive'
 
 // Selection gesture state
 let lastClickedIndex = -1;       // For shift-click range select
@@ -48,29 +49,33 @@ document.addEventListener('DOMContentLoaded', function() {
         fetchConversations();
     });
 
-    document.getElementById('deleteModeButton').addEventListener('click', function() {
-        toggleDeleteMode(true);
+    document.getElementById('cleanupModeButton').addEventListener('click', function() {
+        toggleCleanupMode(true);
     });
 
     document.getElementById('browseButton').addEventListener('click', function() {
-        toggleDeleteMode(false);
+        toggleCleanupMode(false);
     });
 
     document.getElementById('selectAllButton').addEventListener('click', function() {
         selectAllFiltered();
     });
 
+    document.getElementById('archiveSelectedButton').addEventListener('click', function() {
+        showConfirmation('archive');
+    });
+
     document.getElementById('deleteSelectedButton').addEventListener('click', function() {
-        showDeletionConfirmation();
+        showConfirmation('delete');
     });
 
     document.getElementById('confirmCancel').addEventListener('click', function() {
         document.getElementById('confirmOverlay').style.display = 'none';
     });
 
-    document.getElementById('confirmDelete').addEventListener('click', function() {
+    document.getElementById('confirmAction').addEventListener('click', function() {
         document.getElementById('confirmOverlay').style.display = 'none';
-        executeDelete();
+        executeAction();
     });
 
     document.getElementById('clearDataButton').addEventListener('click', function() {
@@ -381,17 +386,17 @@ function onDragEnd() {
 }
 
 // ----------------------------
-// Delete Mode Toggle
+// Cleanup Mode Toggle
 // ----------------------------
 
-function toggleDeleteMode(on) {
+function toggleCleanupMode(on) {
     deleteMode = on;
     selectedIds.clear();
 
     // Toggle toolbars
     document.getElementById('browseToolbar').style.display = on ? 'none' : 'block';
-    document.getElementById('deleteToolbar').style.display = on ? 'block' : 'none';
-    document.getElementById('deleteSelectedButton').style.display = on ? 'flex' : 'none';
+    document.getElementById('cleanupToolbar').style.display = on ? 'block' : 'none';
+    document.getElementById('cleanupActions').style.display = on ? 'block' : 'none';
     document.getElementById('fetchButton2').style.display = on ? 'none' : '';
     document.getElementById('settingsWrapper').style.display = on ? 'none' : '';
     document.getElementById('deletionProgress').style.display = 'none';
@@ -409,10 +414,13 @@ function toggleDeleteMode(on) {
 function updateSelectionCounter() {
     var count = selectedIds.size;
     document.getElementById('selectedCount').textContent = count;
-    document.getElementById('deleteSelectedButton').disabled = (count === 0);
+    var disabled = (count === 0);
+    document.getElementById('archiveSelectedButton').disabled = disabled;
+    document.getElementById('deleteSelectedButton').disabled = disabled;
+    document.getElementById('archiveSelectedButton').textContent = count > 0
+        ? 'Archive (' + count + ')' : 'Archive';
     document.getElementById('deleteSelectedButton').textContent = count > 0
-        ? 'Delete Selected (' + count + ')'
-        : 'Delete Selected';
+        ? 'Delete (' + count + ')' : 'Delete';
 }
 
 function selectAllFiltered() {
@@ -446,19 +454,31 @@ function selectAllFiltered() {
 }
 
 // ----------------------------
-// Deletion Confirmation & Execution
+// Confirmation & Execution (Archive / Delete)
 // ----------------------------
 
-function showDeletionConfirmation() {
+function showConfirmation(action) {
     if (selectedIds.size === 0) return;
+    pendingAction = action;
 
-    // Build list of selected titles
     var selectedItems = currentData.filter(function(item) {
         return selectedIds.has(item.id);
     });
 
+    var isArchive = (action === 'archive');
+    var actionLabel = isArchive ? 'archive' : 'delete';
+    var titleEl = document.getElementById('confirmTitle');
+    var actionBtn = document.getElementById('confirmAction');
+
+    titleEl.textContent = isArchive ? 'Confirm Archive' : 'Confirm Deletion';
+    titleEl.style.color = isArchive ? '#10a37f' : '#ff6b7a';
+
     document.getElementById('confirmCount').textContent =
-        'You are about to soft-delete ' + selectedItems.length + ' conversation(s). This will hide them from ChatGPT.';
+        'You are about to ' + actionLabel + ' ' + selectedItems.length +
+        ' conversation(s).' + (isArchive ? ' They will be moved to your archive.' : ' This will hide them from ChatGPT.');
+
+    actionBtn.textContent = isArchive ? 'Archive' : 'Delete';
+    actionBtn.className = isArchive ? 'confirm-archive' : '';
 
     var listHtml = selectedItems.map(function(item) {
         return '<div>' + escapeHtml(item.title || 'Untitled') + '</div>';
@@ -468,34 +488,40 @@ function showDeletionConfirmation() {
     document.getElementById('confirmOverlay').style.display = 'block';
 }
 
-function executeDelete() {
+function executeAction() {
     pendingDeleteIds = Array.from(selectedIds);
     if (pendingDeleteIds.length === 0) return;
 
-    // Disable UI during deletion
+    var isArchive = (pendingAction === 'archive');
+    var actionLabel = isArchive ? 'Archiving' : 'Deleting';
+    var patchBody = isArchive
+        ? JSON.stringify({ is_archived: true })
+        : JSON.stringify({ is_visible: false });
+
+    // Disable UI during operation
+    document.getElementById('archiveSelectedButton').disabled = true;
     document.getElementById('deleteSelectedButton').disabled = true;
     document.getElementById('selectAllButton').disabled = true;
     document.getElementById('browseButton').disabled = true;
     document.getElementById('searchInput').disabled = true;
     document.getElementById('deletionProgress').style.display = 'block';
+    document.getElementById('progressTitle').textContent = actionLabel + '...';
     document.getElementById('deletionStatus').textContent =
-        'Deleting 0 of ' + pendingDeleteIds.length + '...';
+        actionLabel + ' 0 of ' + pendingDeleteIds.length + '...';
 
-    // Perform deletion directly from the popup — no background message passing.
-    // The popup has the same host_permissions and can fetch chatgpt.com directly.
     chrome.storage.local.get(['apiKey'], function(result) {
         if (!result.apiKey) {
-            onDeletionComplete([], pendingDeleteIds);
+            onActionComplete([], pendingDeleteIds);
             return;
         }
 
         var apiKey = result.apiKey;
-        var deletedIds = [];
+        var successIds = [];
         var failedIds = [];
 
-        function deleteNext(index) {
+        function processNext(index) {
             if (index >= pendingDeleteIds.length) {
-                onDeletionComplete(deletedIds, failedIds);
+                onActionComplete(successIds, failedIds);
                 return;
             }
 
@@ -508,11 +534,11 @@ function executeDelete() {
                     'Authorization': apiKey,
                     'Content-Type': 'application/json'
                 }),
-                body: JSON.stringify({ is_visible: false })
+                body: patchBody
             })
             .then(function(response) {
                 if (response.ok) {
-                    deletedIds.push(id);
+                    successIds.push(id);
                 } else {
                     failedIds.push(id);
                 }
@@ -521,18 +547,18 @@ function executeDelete() {
                 failedIds.push(id);
             })
             .then(function() {
-                var completed = deletedIds.length + failedIds.length;
+                var completed = successIds.length + failedIds.length;
                 document.getElementById('deletionStatus').textContent =
-                    'Deleting ' + completed + ' of ' + pendingDeleteIds.length + '...';
-                deleteNext(index + 1);
+                    actionLabel + ' ' + completed + ' of ' + pendingDeleteIds.length + '...';
+                processNext(index + 1);
             });
         }
 
-        deleteNext(0);
+        processNext(0);
     });
 }
 
-function onDeletionComplete(deletedIds, failedIds) {
+function onActionComplete(successIds, failedIds) {
     document.getElementById('deletionProgress').style.display = 'none';
 
     // Re-enable UI
@@ -540,11 +566,14 @@ function onDeletionComplete(deletedIds, failedIds) {
     document.getElementById('browseButton').disabled = false;
     document.getElementById('searchInput').disabled = false;
 
-    // Remove successfully deleted items from cached data
-    if (deletedIds.length > 0) {
-        var deletedSet = new Set(deletedIds);
+    var isArchive = (pendingAction === 'archive');
+    var actionPast = isArchive ? 'archived' : 'deleted';
+
+    // Remove successfully processed items from cached data
+    if (successIds.length > 0) {
+        var successSet = new Set(successIds);
         currentData = currentData.filter(function(item) {
-            return !deletedSet.has(item.id);
+            return !successSet.has(item.id);
         });
         chrome.storage.local.set({apiData: currentData}, function() {});
     }
@@ -558,9 +587,9 @@ function onDeletionComplete(deletedIds, failedIds) {
     displayData(currentData, filter);
 
     // Report results
-    var message = deletedIds.length + ' conversation(s) deleted successfully.';
+    var message = successIds.length + ' conversation(s) ' + actionPast + ' successfully.';
     if (failedIds.length > 0) {
-        message += '\n' + failedIds.length + ' conversation(s) failed to delete.';
+        message += '\n' + failedIds.length + ' conversation(s) failed.';
     }
     alert(message);
 }
