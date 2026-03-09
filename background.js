@@ -1,50 +1,9 @@
-chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
-    if (request.action === "fetchData") {
-        chrome.storage.local.get(['apiKey'], function(result) {
-            if (result.apiKey) {
-                const apiKey = result.apiKey;
-                const limit = 100;
-                const maxOffset = 1000;
-                let offset = 0;
-                let allData = [];
+// Background service worker
+// Currently minimal — fetch and delete operations are handled directly
+// by popup.js using the extension's host_permissions.
+// This file is required by the manifest but serves as a placeholder
+// for any future background-only tasks.
 
-                function fetchDataWithOffset() {
-                    if (offset <= maxOffset) {
-                        const url = `https://chatgpt.com/backend-api/conversations?offset=${offset}&limit=${limit}&order=updated`;
-
-                        fetch(url, {
-                            method: 'GET',
-                            headers: new Headers({
-                                'Authorization': apiKey,
-                                'Content-Type': 'application/json'
-                            }),
-                        })
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data && data.items) {
-                                allData = allData.concat(data.items);
-                            }
-                            offset += limit;
-
-                            if (offset <= maxOffset) {
-                                fetchDataWithOffset();
-                            } else {
-                                sendResponse({ data: allData });
-                            }
-                        })
-                        .catch(error => {
-                            sendResponse({ data: error });
-                        });
-                    }
-                }
-
-                fetchDataWithOffset();
-            } else {
-                sendResponse({ data: "API key not found in local storage" });
-            }
-        });
-
-        return true;
-    }
-
+chrome.runtime.onInstalled.addListener(function() {
+    console.log('ChatGPT History Search extension installed.');
 });

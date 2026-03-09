@@ -1,204 +1,298 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>API Results</title>
+    <title>ChatGPT History Search</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
         body {
-            font-family: 'Arial', sans-serif;
+            font-family: ui-sans-serif, -apple-system, "system-ui", "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
             margin: 0;
-            padding: 0;
-            background-color: #f7f7f7;
-            background: linear-gradient(to bottom right, #be85ff, #7df0ff);
-            color: #333;
+            padding: 8px;
+            background-color: #212121;
+            color: #ececec;
+            width: 320px;
+            font-size: 14px;
+            line-height: 20px;
         }
-        .results-container {
-            margin: 10px;
-            padding: 15px;
-            width: 350px;
-            min-height: 100px;
-            max-height: 350px;
-            overflow-y: auto;
-            background: #fff;
-            border-radius: 8px;
-            border: 1px solid #ddd;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+
+        /* --- Buttons --- */
+        .button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 36px;
+            padding: 6px 12px;
+            margin: 3px 0;
+            color: #ececec;
+            background-color: transparent;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            font-family: inherit;
+            line-height: 20px;
+            text-align: left;
+            transition: background-color 0.15s;
         }
-        .result-link {
+        .button:hover {
+            background-color: #2f2f2f;
+        }
+        .button:active {
+            background-color: #3a3a3a;
+        }
+        .button-primary {
+            background-color: #2f2f2f;
+            color: #fff;
+            justify-content: center;
+        }
+        .button-primary:hover {
+            background-color: #3a3a3a;
+        }
+        .button-danger {
+            background-color: rgba(220, 53, 69, 0.15);
+            color: #ff6b7a;
+            justify-content: center;
+        }
+        .button-danger:hover {
+            background-color: rgba(220, 53, 69, 0.25);
+        }
+        .button-danger:disabled {
+            background-color: transparent;
+            color: #555;
+            cursor: not-allowed;
+        }
+        .button-accent {
+            background-color: rgba(16, 163, 127, 0.15);
+            color: #10a37f;
+            justify-content: center;
+        }
+        .button-accent:hover {
+            background-color: rgba(16, 163, 127, 0.25);
+        }
+        .button-subtle {
+            color: #afafaf;
+        }
+        .button-subtle:hover {
+            color: #ececec;
+        }
+
+        /* --- Search input --- */
+        #searchInput {
             display: block;
-            margin-bottom: 5px;
-            color: #333;
+            width: 100%;
+            height: 36px;
+            padding: 6px 12px;
+            margin: 3px 0;
+            border-radius: 10px;
+            border: 1px solid #3a3a3a;
+            background-color: #2f2f2f;
+            color: #ececec;
+            font-size: 14px;
+            font-family: inherit;
+            line-height: 20px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        #searchInput:focus {
+            border-color: #10a37f;
+        }
+        #searchInput::placeholder {
+            color: #777;
+        }
+
+        /* --- Results container --- */
+        .results-container {
+            margin: 4px 0;
+            padding: 0;
+            width: 100%;
+            min-height: 60px;
+            max-height: 380px;
+            overflow-y: auto;
+            background: transparent;
+            border-radius: 10px;
+        }
+        /* Scrollbar styling */
+        .results-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        .results-container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .results-container::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 3px;
+        }
+        .results-container::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* --- Conversation links (browse mode) --- */
+        .result-link {
+            display: flex;
+            align-items: center;
+            height: 36px;
+            padding: 6px 10px;
+            color: #ececec;
             text-decoration: none;
-            border-bottom: 1px solid #ddd;
-            padding: 12px 10px;
-            transition: background-color 0.3s;
+            border-radius: 10px;
+            font-size: 14px;
+            line-height: 20px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: background-color 0.15s;
         }
         .result-link:hover {
-            background-color: #e9e9e9;
+            background-color: #2f2f2f;
         }
-        .button {
-            display: block;
-            width: calc(100% - 20px);
-            padding: 10px;
-            margin: 6px auto;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            transition: opacity 0.3s;
-            text-align: center;
-        }
-        #fetchButton {
-            background-color: #007bff;
-        }
-        #fetchButton:hover {
-            opacity: 0.8;
-        }
-        #clearDataButton {
-            background-color: #ff4444;
-        }
-        #clearDataButton:hover {
-            opacity: 0.8;
-        }
-        #getKeyButton {
-            background-color: #44d3ff;
-        }
-        #getKeyButton:hover {
-            opacity: 0.8;
-        }
-        #deleteModeButton {
-            background-color: #ff8800;
-        }
-        #deleteModeButton:hover {
-            opacity: 0.8;
-        }
-        #browseButton {
-            background-color: #6c757d;
-        }
-        #browseButton:hover {
-            opacity: 0.8;
-        }
-        #selectAllButton {
-            background-color: #17a2b8;
-        }
-        #selectAllButton:hover {
-            opacity: 0.8;
-        }
-        #deleteSelectedButton {
-            background-color: #dc3545;
-        }
-        #deleteSelectedButton:hover {
-            opacity: 0.8;
-        }
-        #deleteSelectedButton:disabled {
-            background-color: #999;
-            cursor: not-allowed;
-            opacity: 0.6;
-        }
-        #searchInput {
-            display: none;
-            width: calc(100% - 40px);
-            padding: 10px;
-            margin: 10px;
-            border-radius: 5px;
-            border: 1px solid #ddd;
-            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
-        }
+
+        /* --- Loading --- */
         #loading {
             display: none;
             text-align: center;
+            padding: 20px 0;
+            color: #afafaf;
+            font-size: 13px;
         }
         #loading-spinner {
-            border: 4px solid rgba(255, 255, 255, 0.3);
-            border-top: 4px solid #333;
+            border: 3px solid #3a3a3a;
+            border-top: 3px solid #10a37f;
             border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto;
-            margin-top: 20px;
+            width: 24px;
+            height: 24px;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 12px;
+        }
+        #loading p {
+            margin: 4px 0;
+        }
+        #loadingWarning {
+            font-size: 15px;
+            font-weight: 600;
+            color: #ececec;
+            margin-top: 12px;
+        }
+        #loadingWarningDetail {
+            font-size: 11px;
+            color: #666;
+            margin-top: 2px;
         }
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
 
-        /* Delete mode styles */
+        /* --- Delete mode header --- */
         #deleteModeHeader {
             display: none;
-            margin: 10px;
-            padding: 10px 12px;
-            background-color: #fff3cd;
-            border-radius: 5px;
-            border-left: 4px solid #ffc107;
+            margin: 4px 0;
+            padding: 8px 12px;
+            background-color: rgba(255, 152, 0, 0.1);
+            border-radius: 10px;
             font-size: 13px;
+            color: #afafaf;
         }
         #deleteModeHeader p {
             margin: 0;
         }
         #deleteModeHeader .header-title {
-            font-weight: bold;
-            margin-bottom: 4px;
+            font-weight: 600;
+            color: #ffb347;
+            margin-bottom: 2px;
         }
         #deleteModeHeader .header-subtitle {
-            color: #666;
+            color: #888;
+            font-size: 12px;
         }
+
+        /* --- Selection counter --- */
         #selectionCounter {
             display: none;
-            margin: 6px 10px;
+            margin: 2px 0;
+            padding: 4px 12px;
             text-align: center;
-            font-weight: bold;
-            font-size: 14px;
-            color: #333;
+            font-size: 13px;
+            color: #afafaf;
         }
+
+        /* --- Checkbox items (delete mode) --- */
         .checkbox-item {
             display: flex;
             align-items: center;
-            padding: 10px;
-            border-bottom: 1px solid #ddd;
-            transition: background-color 0.2s;
+            height: 36px;
+            padding: 6px 10px;
+            border-radius: 10px;
+            transition: background-color 0.15s;
             cursor: pointer;
         }
         .checkbox-item:hover {
-            background-color: #f5f5f5;
+            background-color: #2f2f2f;
         }
         .checkbox-item input[type="checkbox"] {
-            margin-right: 10px;
-            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
             width: 16px;
             height: 16px;
+            border: 2px solid #555;
+            border-radius: 4px;
+            background: transparent;
+            margin-right: 10px;
+            cursor: pointer;
             flex-shrink: 0;
+            position: relative;
+            transition: all 0.15s;
+        }
+        .checkbox-item input[type="checkbox"]:checked {
+            background-color: #10a37f;
+            border-color: #10a37f;
+        }
+        .checkbox-item input[type="checkbox"]:checked::after {
+            content: '';
+            position: absolute;
+            left: 4px;
+            top: 1px;
+            width: 5px;
+            height: 9px;
+            border: solid #fff;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
         }
         .checkbox-item label {
             flex: 1;
             cursor: pointer;
-            word-wrap: break-word;
-            color: #333;
+            color: #ececec;
             font-size: 14px;
+            line-height: 20px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
             user-select: none;
             -webkit-user-select: none;
         }
+
+        /* --- Deletion progress --- */
         #deletionProgress {
             display: none;
-            margin: 10px;
-            padding: 10px 12px;
-            background-color: #e7f3ff;
-            border-radius: 5px;
-            border-left: 4px solid #007bff;
+            margin: 4px 0;
+            padding: 8px 12px;
+            background-color: rgba(16, 163, 127, 0.1);
+            border-radius: 10px;
             font-size: 13px;
         }
         #deletionProgress .progress-title {
-            font-weight: bold;
-            margin: 0 0 4px 0;
+            font-weight: 600;
+            color: #10a37f;
+            margin: 0 0 2px 0;
         }
         #deletionProgress .progress-status {
             margin: 0;
-            color: #555;
+            color: #afafaf;
         }
 
-        /* Confirmation overlay */
+        /* --- Confirmation overlay --- */
         #confirmOverlay {
             display: none;
             position: fixed;
@@ -206,7 +300,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.6);
+            background: rgba(0, 0, 0, 0.7);
             z-index: 100;
         }
         #confirmDialog {
@@ -214,106 +308,221 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: #fff;
-            border-radius: 8px;
+            background: #2f2f2f;
+            border-radius: 16px;
             padding: 20px;
-            width: 320px;
+            width: 290px;
             max-height: 400px;
             display: flex;
             flex-direction: column;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
         }
         #confirmDialog h3 {
             margin: 0 0 8px 0;
-            color: #dc3545;
-            font-size: 16px;
+            color: #ff6b7a;
+            font-size: 15px;
+            font-weight: 600;
         }
         #confirmDialog .confirm-count {
             margin: 0 0 10px 0;
             font-size: 13px;
-            color: #666;
+            color: #afafaf;
         }
         #confirmDialog .confirm-list {
             flex: 1;
-            max-height: 200px;
+            max-height: 180px;
             overflow-y: auto;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            border: 1px solid #3a3a3a;
+            border-radius: 10px;
             padding: 8px;
             margin-bottom: 14px;
             font-size: 13px;
             line-height: 1.6;
+            color: #ccc;
+            background-color: #212121;
+        }
+        #confirmDialog .confirm-list::-webkit-scrollbar {
+            width: 4px;
+        }
+        #confirmDialog .confirm-list::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 2px;
         }
         #confirmDialog .confirm-list div {
-            padding: 2px 0;
-            border-bottom: 1px solid #eee;
+            padding: 3px 4px;
+            border-bottom: 1px solid #333;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         #confirmDialog .confirm-list div:last-child {
             border-bottom: none;
         }
         #confirmDialog .confirm-buttons {
             display: flex;
-            gap: 10px;
+            gap: 8px;
         }
         #confirmDialog .confirm-buttons button {
             flex: 1;
-            padding: 10px;
+            height: 36px;
+            padding: 6px 12px;
             border: none;
-            border-radius: 5px;
+            border-radius: 10px;
             font-size: 14px;
+            font-family: inherit;
             cursor: pointer;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
             color: white;
+            transition: background-color 0.15s;
         }
         #confirmCancel {
-            background-color: #6c757d;
+            background-color: #3a3a3a;
+            color: #ececec;
         }
         #confirmCancel:hover {
-            opacity: 0.8;
+            background-color: #444;
         }
         #confirmDelete {
-            background-color: #dc3545;
+            background-color: rgba(220, 53, 69, 0.8);
         }
         #confirmDelete:hover {
+            background-color: rgba(220, 53, 69, 1);
+        }
+
+        /* --- Divider --- */
+        .divider {
+            height: 1px;
+            background-color: #333;
+            margin: 6px 0;
+        }
+
+        /* --- Empty state / no data --- */
+        .empty-state {
+            padding: 20px 10px;
+            text-align: center;
+            color: #777;
+            font-size: 13px;
+        }
+
+        /* --- Setup / onboarding --- */
+        #setupView {
+            padding: 16px 4px;
+            text-align: center;
+        }
+        #setupView .setup-icon {
+            font-size: 28px;
+            margin-bottom: 12px;
             opacity: 0.8;
+        }
+        #setupView h2 {
+            margin: 0 0 6px 0;
+            font-size: 15px;
+            font-weight: 600;
+            color: #ececec;
+        }
+        #setupView .setup-desc {
+            font-size: 13px;
+            color: #888;
+            margin: 0 0 16px 0;
+            line-height: 18px;
+        }
+        #setupView .setup-step {
+            font-size: 12px;
+            color: #666;
+            margin-top: 12px;
+        }
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        .status-dot.connected {
+            background-color: #10a37f;
+        }
+        .status-dot.disconnected {
+            background-color: #555;
+        }
+        #connectionStatus {
+            font-size: 12px;
+            color: #888;
+            padding: 4px 12px;
+            margin: 2px 0;
+        }
+
+        /* --- Main view status bar --- */
+        #mainStatus {
+            display: flex;
+            align-items: center;
+            padding: 4px 12px;
+            margin: 2px 0;
+            font-size: 12px;
+            color: #888;
+        }
+        #mainConversationCount {
+            flex: 1;
         }
     </style>
 </head>
 <body>
-    <!-- Browse mode buttons -->
-    <button id="fetchButton" class="button">Fetch Data</button>
-    <button id="getKeyButton" class="button">Get Key From Chat.OpenAI</button>
-
-    <!-- Delete mode toggle (shown after data loads) -->
-    <button id="deleteModeButton" class="button" style="display: none;">Delete Mode</button>
-
-    <!-- Delete mode controls (hidden by default) -->
-    <button id="browseButton" class="button" style="display: none;">Back to Browse</button>
-    <div id="deleteModeHeader">
-        <p class="header-title">Delete Mode Active</p>
-        <p class="header-subtitle">Select conversations to soft-delete (hides them from ChatGPT)</p>
+    <!-- Setup view (shown when no API key or no data) -->
+    <div id="setupView">
+        <div class="setup-icon">&#x1f50d;</div>
+        <h2>ChatGPT History Search</h2>
+        <p class="setup-desc" id="setupDesc">Search and manage your ChatGPT conversations.</p>
+        <button id="getKeyButton" class="button button-accent">Connect to ChatGPT</button>
+        <button id="fetchButton" class="button button-primary" style="display: none;">Load Conversations</button>
+        <div id="connectionStatus"></div>
+        <p class="setup-step" id="setupHint">Open chatgpt.com, then click Connect.</p>
     </div>
-    <div id="selectionCounter">Selected: <span id="selectedCount">0</span></div>
-    <button id="selectAllButton" class="button" style="display: none;">Select All (Filtered)</button>
-    <button id="deleteSelectedButton" class="button" style="display: none;" disabled>Delete Selected</button>
 
-    <input type="text" id="searchInput" placeholder="Search...">
+    <!-- Main view (shown after data is loaded) -->
+    <div id="mainView" style="display: none;">
+        <!-- Connection status bar -->
+        <div id="mainStatus">
+            <span id="mainConnectionDot" class="status-dot connected"></span>
+            <span id="mainConversationCount"></span>
+        </div>
+
+        <!-- Browse mode toolbar -->
+        <div id="browseToolbar">
+            <button id="fetchButton2" class="button button-subtle">Refresh History</button>
+            <button id="deleteModeButton" class="button button-subtle">Delete Mode</button>
+        </div>
+
+        <!-- Delete mode toolbar (hidden by default) -->
+        <div id="deleteToolbar" style="display: none;">
+            <button id="browseButton" class="button button-subtle">&larr; Back to Browse</button>
+            <div id="deleteModeHeader">
+                <p class="header-title">Delete Mode</p>
+                <p class="header-subtitle">Select conversations to hide from ChatGPT</p>
+            </div>
+            <div id="selectionCounter">Selected: <span id="selectedCount">0</span></div>
+            <button id="selectAllButton" class="button button-accent">Select All Visible</button>
+            <button id="deleteSelectedButton" class="button button-danger" disabled>Delete Selected</button>
+        </div>
+
+        <input type="text" id="searchInput" placeholder="Search conversations...">
+
+        <div id="deletionProgress">
+            <p class="progress-title">Deleting...</p>
+            <p class="progress-status" id="deletionStatus">Preparing...</p>
+        </div>
+
+        <div id="result" class="results-container"></div>
+
+        <button id="clearDataButton" class="button button-subtle">Clear Cached Data</button>
+        <button id="disconnectButton" class="button button-subtle" style="color: #ff6b7a;">Disconnect</button>
+    </div>
 
     <div id="loading">
         <div id="loading-spinner"></div>
-        <p>Loading...</p>
-        <p>(This may take upwards of 10 seconds)</p>
+        <p id="loadingCount">Loading conversations...</p>
+        <p id="loadingTimer">0s elapsed</p>
+        <p id="loadingWarning">Keep this window open</p>
+        <p id="loadingWarningDetail">Loading 1000+ conversations can take &gt; 60 sec</p>
     </div>
-
-    <div id="deletionProgress">
-        <p class="progress-title">Deleting...</p>
-        <p class="progress-status" id="deletionStatus">Preparing...</p>
-    </div>
-
-    <div id="result" class="results-container"></div>
-
-    <button id="clearDataButton" class="button" style="display: none;">Clear Data</button>
 
     <!-- Confirmation modal -->
     <div id="confirmOverlay">
@@ -323,7 +532,7 @@
             <div class="confirm-list" id="confirmList"></div>
             <div class="confirm-buttons">
                 <button id="confirmCancel">Cancel</button>
-                <button id="confirmDelete">Confirm Delete</button>
+                <button id="confirmDelete">Delete</button>
             </div>
         </div>
     </div>

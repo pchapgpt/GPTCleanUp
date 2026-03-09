@@ -15,22 +15,37 @@ let dragCheckState = true;        // Whether drag is checking or unchecking
 // ----------------------------
 
 document.addEventListener('DOMContentLoaded', function() {
-    chrome.storage.local.get(['apiData'], function(result) {
-        if (result.apiData) {
+    // Check stored state and show the right view
+    chrome.storage.local.get(['apiKey', 'apiData'], function(result) {
+        if (result.apiData && result.apiData.length > 0) {
+            // Have data — go straight to main view
             currentData = result.apiData;
-            document.getElementById('searchInput').style.display = 'block';
-            document.getElementById('clearDataButton').style.display = 'block';
-            document.getElementById('deleteModeButton').style.display = 'block';
-            displayData(currentData);
+            showMainView();
+        } else if (result.apiKey) {
+            // Have key but no data — show fetch button
+            showSetupConnected();
+        } else {
+            // Fresh install — show connect prompt
+            showSetupDisconnected();
         }
     });
 
+    // --- Setup view listeners ---
     document.getElementById('getKeyButton').addEventListener('click', function() {
         getApiKey();
     });
 
+    document.getElementById('fetchButton').addEventListener('click', function() {
+        fetchConversations();
+    });
+
+    // --- Main view listeners ---
     document.getElementById('searchInput').addEventListener('input', function() {
         displayData(currentData, document.getElementById('searchInput').value);
+    });
+
+    document.getElementById('fetchButton2').addEventListener('click', function() {
+        fetchConversations();
     });
 
     document.getElementById('deleteModeButton').addEventListener('click', function() {
@@ -57,29 +72,156 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('confirmOverlay').style.display = 'none';
         executeDelete();
     });
-});
 
-// ----------------------------
-// Fetch Data
-// ----------------------------
+    document.getElementById('clearDataButton').addEventListener('click', function() {
+        clearData();
+    });
 
-document.getElementById('fetchButton').addEventListener('click', function() {
-    document.getElementById('loading').style.display = 'block';
-    chrome.runtime.sendMessage({action: "fetchData"}, function(response) {
-        document.getElementById('loading').style.display = 'none';
-
-        if (response.data) {
-            currentData = response.data;
-            document.getElementById('searchInput').style.display = 'block';
-            document.getElementById('clearDataButton').style.display = 'block';
-            document.getElementById('deleteModeButton').style.display = 'block';
-            chrome.storage.local.set({apiData: response.data}, function() {});
-            displayData(currentData);
-        } else {
-            document.getElementById('result').innerText = "Error fetching data.";
-        }
+    document.getElementById('disconnectButton').addEventListener('click', function() {
+        disconnectToken();
     });
 });
+
+// ----------------------------
+// View transitions
+// ----------------------------
+
+function showSetupDisconnected() {
+    document.getElementById('setupView').style.display = 'block';
+    document.getElementById('mainView').style.display = 'none';
+    document.getElementById('getKeyButton').style.display = 'flex';
+    document.getElementById('fetchButton').style.display = 'none';
+    document.getElementById('connectionStatus').innerHTML =
+        '<span class="status-dot disconnected"></span>Not connected';
+    document.getElementById('setupHint').textContent = 'Open chatgpt.com, then click Connect.';
+    document.getElementById('setupDesc').textContent = 'Search and manage your ChatGPT conversations.';
+}
+
+function showSetupConnected() {
+    document.getElementById('setupView').style.display = 'block';
+    document.getElementById('mainView').style.display = 'none';
+    document.getElementById('getKeyButton').style.display = 'none';
+    document.getElementById('fetchButton').style.display = 'flex';
+    document.getElementById('connectionStatus').innerHTML =
+        '<span class="status-dot connected"></span>Connected';
+    document.getElementById('setupHint').textContent = '';
+    document.getElementById('setupDesc').textContent = 'Ready to load your conversations.';
+}
+
+function showMainView() {
+    document.getElementById('setupView').style.display = 'none';
+    document.getElementById('mainView').style.display = 'block';
+    updateMainStatus();
+    displayData(currentData);
+}
+
+function updateMainStatus() {
+    var countEl = document.getElementById('mainConversationCount');
+    if (currentData && currentData.length > 0) {
+        countEl.textContent = currentData.length + ' conversations';
+    } else {
+        countEl.textContent = 'No conversations loaded';
+    }
+    // Show connected dot (green if we have data, implying valid key)
+    document.getElementById('mainConnectionDot').className = 'status-dot connected';
+}
+
+// ----------------------------
+// Fetch Data (directly from popup — no background.js needed)
+// ----------------------------
+
+var loadingTimerInterval = null;
+
+function fetchConversations() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('loadingCount').textContent = 'Loading conversations...';
+    document.getElementById('loadingTimer').textContent = '0s elapsed';
+
+    // Start real-time timer
+    var startTime = Date.now();
+    if (loadingTimerInterval) clearInterval(loadingTimerInterval);
+    loadingTimerInterval = setInterval(function() {
+        var elapsed = Math.floor((Date.now() - startTime) / 1000);
+        document.getElementById('loadingTimer').textContent = elapsed + 's elapsed';
+    }, 1000);
+
+    chrome.storage.local.get(['apiKey'], function(result) {
+        if (!result.apiKey) {
+            clearInterval(loadingTimerInterval);
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('setupDesc').textContent = 'No API key found. Please reconnect.';
+            document.getElementById('setupHint').textContent = '';
+            showSetupDisconnected();
+            return;
+        }
+
+        var apiKey = result.apiKey;
+        var limit = 100;
+        var maxOffset = 1000;
+        var offset = 0;
+        var allData = [];
+
+        function fetchPage() {
+            if (offset > maxOffset) {
+                // Done fetching
+                clearInterval(loadingTimerInterval);
+                document.getElementById('loading').style.display = 'none';
+                currentData = allData;
+                chrome.storage.local.set({apiData: allData}, function() {});
+                showMainView();
+                return;
+            }
+
+            var url = 'https://chatgpt.com/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated';
+
+            fetch(url, {
+                method: 'GET',
+                headers: new Headers({
+                    'Authorization': apiKey,
+                    'Content-Type': 'application/json'
+                })
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                if (data && data.items) {
+                    allData = allData.concat(data.items);
+                    document.getElementById('loadingCount').textContent =
+                        'Loaded ' + allData.length + ' conversations...';
+                    // If we got fewer items than the limit, there are no more pages
+                    if (data.items.length < limit) {
+                        clearInterval(loadingTimerInterval);
+                        document.getElementById('loading').style.display = 'none';
+                        currentData = allData;
+                        chrome.storage.local.set({apiData: allData}, function() {});
+                        showMainView();
+                        return;
+                    }
+                }
+                offset += limit;
+                fetchPage();
+            })
+            .catch(function() {
+                clearInterval(loadingTimerInterval);
+                document.getElementById('loading').style.display = 'none';
+                if (allData.length > 0) {
+                    // Partial success — use what we got
+                    currentData = allData;
+                    chrome.storage.local.set({apiData: allData}, function() {});
+                    showMainView();
+                } else {
+                    document.getElementById('setupDesc').textContent = 'Failed to load. Try reconnecting.';
+                    document.getElementById('setupHint').textContent = '';
+                    document.getElementById('getKeyButton').style.display = 'flex';
+                    document.getElementById('fetchButton').style.display = 'none';
+                    document.getElementById('connectionStatus').innerHTML =
+                        '<span class="status-dot disconnected"></span>Connection expired';
+                }
+            });
+        }
+
+        fetchPage();
+    });
+}
 
 // ----------------------------
 // Display Data (dispatcher)
@@ -88,7 +230,7 @@ document.getElementById('fetchButton').addEventListener('click', function() {
 function displayData(data, filter) {
     filter = filter || '';
     if (!data || !Array.isArray(data)) {
-        document.getElementById('result').innerHTML = "No data to display.";
+        document.getElementById('result').innerHTML = '<div class="empty-state">No data to display.</div>';
         return;
     }
 
@@ -110,7 +252,7 @@ function renderResultsAsBrowse(items) {
         }).join('');
         document.getElementById('result').innerHTML = output;
     } else {
-        document.getElementById('result').innerHTML = "No matching data found.";
+        document.getElementById('result').innerHTML = '<div class="empty-state">No matching conversations found.</div>';
     }
 }
 
@@ -132,49 +274,9 @@ function renderResultsAsDelete(items) {
         var resultEl = document.getElementById('result');
         var checkboxes = resultEl.querySelectorAll('input[type="checkbox"]');
 
-        // --- Individual checkbox change (keeps selectedIds in sync) ---
-        for (var i = 0; i < checkboxes.length; i++) {
-            checkboxes[i].addEventListener('change', function() {
-                var id = this.getAttribute('data-id');
-                if (this.checked) {
-                    selectedIds.add(id);
-                } else {
-                    selectedIds.delete(id);
-                }
-                updateSelectionCounter();
-            });
-        }
-
-        // --- Shift-click range selection ---
-        for (var i = 0; i < checkboxes.length; i++) {
-            (function(idx) {
-                checkboxes[idx].addEventListener('click', function(e) {
-                    var currentIndex = idx;
-
-                    if (e.shiftKey && lastClickedIndex !== -1 && lastClickedIndex !== currentIndex) {
-                        // Prevent the default toggle — we'll handle it manually
-                        e.preventDefault();
-
-                        var start = Math.min(lastClickedIndex, currentIndex);
-                        var end = Math.max(lastClickedIndex, currentIndex);
-                        // Use the state of the anchor checkbox to decide check/uncheck
-                        var anchorChecked = checkboxes[lastClickedIndex].checked;
-
-                        for (var j = start; j <= end; j++) {
-                            setCheckbox(checkboxes[j], anchorChecked);
-                        }
-                        updateSelectionCounter();
-                    }
-
-                    lastClickedIndex = currentIndex;
-                });
-            })(i);
-        }
-
-        // --- Drag selection ---
         // Prevent ALL native checkbox/label toggle — we manage state manually
         // via setCheckbox(). This avoids race conditions between mousedown
-        // (where we set dragCheckState) and the deferred native click toggle.
+        // (where we read state) and the deferred native click toggle.
         resultEl.addEventListener('click', function(e) {
             var target = e.target;
             if (target.type === 'checkbox' || target.tagName === 'LABEL') {
@@ -182,19 +284,38 @@ function renderResultsAsDelete(items) {
             }
         });
 
+        // --- All selection logic lives in mousedown on the row ---
+        // This fires regardless of whether the user clicks the checkbox or label,
+        // and handles normal click, shift-click range, and drag-start uniformly.
         var rows = resultEl.querySelectorAll('.checkbox-item');
         for (var i = 0; i < rows.length; i++) {
             (function(row) {
                 row.addEventListener('mousedown', function(e) {
-                    // Only start drag on left-click, ignore if shift is held (that's range select)
-                    if (e.button !== 0 || e.shiftKey) return;
+                    if (e.button !== 0) return;
                     e.preventDefault(); // prevent text selection
 
-                    isDragging = true;
                     var cb = row.querySelector('input[type="checkbox"]');
-                    setCheckbox(cb, !cb.checked);
-                    dragCheckState = cb.checked;
-                    updateSelectionCounter();
+                    var currentIndex = parseInt(row.getAttribute('data-index'));
+
+                    if (e.shiftKey && lastClickedIndex !== -1 && lastClickedIndex !== currentIndex) {
+                        // --- Shift-click range selection ---
+                        var start = Math.min(lastClickedIndex, currentIndex);
+                        var end = Math.max(lastClickedIndex, currentIndex);
+                        var anchorChecked = checkboxes[lastClickedIndex].checked;
+
+                        for (var j = start; j <= end; j++) {
+                            setCheckbox(checkboxes[j], anchorChecked);
+                        }
+                        updateSelectionCounter();
+                    } else {
+                        // --- Normal click: toggle + start drag ---
+                        isDragging = true;
+                        setCheckbox(cb, !cb.checked);
+                        dragCheckState = cb.checked;
+                        updateSelectionCounter();
+                    }
+
+                    lastClickedIndex = currentIndex;
                 });
 
                 row.addEventListener('mouseenter', function() {
@@ -213,7 +334,7 @@ function renderResultsAsDelete(items) {
             if (isDragging) e.preventDefault();
         });
     } else {
-        document.getElementById('result').innerHTML = "No matching data found.";
+        document.getElementById('result').innerHTML = '<div class="empty-state">No matching conversations found.</div>';
     }
     updateSelectionCounter();
 }
@@ -244,18 +365,11 @@ function toggleDeleteMode(on) {
     deleteMode = on;
     selectedIds.clear();
 
-    // Browse mode elements
-    document.getElementById('fetchButton').style.display = on ? 'none' : 'block';
-    document.getElementById('getKeyButton').style.display = on ? 'none' : 'block';
+    // Toggle toolbars
+    document.getElementById('browseToolbar').style.display = on ? 'none' : 'block';
+    document.getElementById('deleteToolbar').style.display = on ? 'block' : 'none';
     document.getElementById('clearDataButton').style.display = on ? 'none' : 'block';
-    document.getElementById('deleteModeButton').style.display = on ? 'none' : 'block';
-
-    // Delete mode elements
-    document.getElementById('browseButton').style.display = on ? 'block' : 'none';
-    document.getElementById('deleteModeHeader').style.display = on ? 'block' : 'none';
-    document.getElementById('selectionCounter').style.display = on ? 'block' : 'none';
-    document.getElementById('selectAllButton').style.display = on ? 'block' : 'none';
-    document.getElementById('deleteSelectedButton').style.display = on ? 'block' : 'none';
+    document.getElementById('disconnectButton').style.display = on ? 'none' : 'block';
     document.getElementById('deletionProgress').style.display = 'none';
 
     // Re-render with current filter
@@ -413,7 +527,8 @@ function onDeletionComplete(deletedIds, failedIds) {
     // Clear selections
     selectedIds.clear();
 
-    // Re-render
+    // Update count and re-render
+    updateMainStatus();
     var filter = document.getElementById('searchInput').value;
     displayData(currentData, filter);
 
@@ -431,7 +546,7 @@ function onDeletionComplete(deletedIds, failedIds) {
 
 function getApiKey() {
     if (apiKeySaved) {
-        alert('API key has already been saved.');
+        showSetupConnected();
         return;
     }
 
@@ -440,18 +555,22 @@ function getApiKey() {
         const currentUrl = new URL(currentTab.url);
 
         if (currentUrl.hostname !== 'chat.openai.com' && currentUrl.hostname !== 'chatgpt.com') {
-            alert('Please use this on either "https://chat.openai.com" or "https://chatgpt.com" website');
+            document.getElementById('setupHint').textContent = 'Please navigate to chatgpt.com first.';
             return;
         }
+
+        // Show connecting state
+        document.getElementById('setupHint').textContent = 'Connecting... reload will capture your session.';
+        document.getElementById('getKeyButton').disabled = true;
 
         const onBeforeSendHeadersListener = function(details) {
             for (var i = 0; i < details.requestHeaders.length; ++i) {
                 if (details.requestHeaders[i].name === 'Authorization') {
                     var apiKey = details.requestHeaders[i].value;
                     chrome.storage.local.set({ apiKey: apiKey }, function() {
-                        alert('API key saved, You may now use Fetch Data!');
+                        apiKeySaved = true;
+                        showSetupConnected();
                     });
-                    apiKeySaved = true;
 
                     chrome.webRequest.onBeforeSendHeaders.removeListener(onBeforeSendHeadersListener);
                 }
@@ -472,23 +591,39 @@ function getApiKey() {
 // Clear Data
 // ----------------------------
 
-document.getElementById('clearDataButton').addEventListener('click', function() {
+function clearData() {
     chrome.storage.local.remove(['apiData'], function() {
         var error = chrome.runtime.lastError;
         if (error) {
             console.error(error);
         } else {
             currentData = [];
-            document.getElementById('result').innerHTML = '';
-            document.getElementById('searchInput').style.display = 'none';
-            document.getElementById('clearDataButton').style.display = 'none';
-            document.getElementById('deleteModeButton').style.display = 'none';
-            if (deleteMode) {
-                toggleDeleteMode(false);
-            }
+            deleteMode = false;
+            // Go back to setup view — key is still saved so show fetch
+            chrome.storage.local.get(['apiKey'], function(result) {
+                if (result.apiKey) {
+                    showSetupConnected();
+                } else {
+                    showSetupDisconnected();
+                }
+            });
         }
     });
-});
+}
+
+// ----------------------------
+// Disconnect (delete token)
+// ----------------------------
+
+function disconnectToken() {
+    if (!confirm('Disconnect from ChatGPT? This will remove your saved session token and cached data.')) return;
+    chrome.storage.local.remove(['apiKey', 'apiData'], function() {
+        apiKeySaved = false;
+        currentData = [];
+        deleteMode = false;
+        showSetupDisconnected();
+    });
+}
 
 // ----------------------------
 // Utility
