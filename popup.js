@@ -74,11 +74,24 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     document.getElementById('clearDataButton').addEventListener('click', function() {
+        closeSettingsMenu();
         clearData();
     });
 
     document.getElementById('disconnectButton').addEventListener('click', function() {
+        closeSettingsMenu();
         disconnectToken();
+    });
+
+    // --- Settings menu toggle ---
+    document.getElementById('settingsButton').addEventListener('click', function(e) {
+        e.stopPropagation();
+        document.getElementById('settingsMenu').classList.toggle('open');
+    });
+
+    // Close menu when clicking anywhere else
+    document.addEventListener('click', function() {
+        closeSettingsMenu();
     });
 });
 
@@ -133,6 +146,8 @@ function updateMainStatus() {
 var loadingTimerInterval = null;
 
 function fetchConversations() {
+    document.getElementById('setupView').style.display = 'none';
+    document.getElementById('mainView').style.display = 'none';
     document.getElementById('loading').style.display = 'block';
     document.getElementById('loadingCount').textContent = 'Loading conversations...';
     document.getElementById('loadingTimer').textContent = '0s elapsed';
@@ -237,6 +252,14 @@ function displayData(data, filter) {
     var filteredItems = filter ? data.filter(function(item) {
         return item.title && item.title.toLowerCase().includes(filter.toLowerCase());
     }) : data;
+
+    // Update count to reflect search matches
+    var countEl = document.getElementById('mainConversationCount');
+    if (filter) {
+        countEl.textContent = filteredItems.length + ' of ' + data.length + ' conversations';
+    } else {
+        countEl.textContent = data.length + ' conversations';
+    }
 
     if (deleteMode) {
         renderResultsAsDelete(filteredItems);
@@ -368,9 +391,11 @@ function toggleDeleteMode(on) {
     // Toggle toolbars
     document.getElementById('browseToolbar').style.display = on ? 'none' : 'block';
     document.getElementById('deleteToolbar').style.display = on ? 'block' : 'none';
-    document.getElementById('clearDataButton').style.display = on ? 'none' : 'block';
-    document.getElementById('disconnectButton').style.display = on ? 'none' : 'block';
+    document.getElementById('deleteSelectedButton').style.display = on ? 'flex' : 'none';
+    document.getElementById('fetchButton2').style.display = on ? 'none' : '';
+    document.getElementById('settingsWrapper').style.display = on ? 'none' : '';
     document.getElementById('deletionProgress').style.display = 'none';
+    closeSettingsMenu();
 
     // Re-render with current filter
     var filter = document.getElementById('searchInput').value;
@@ -628,6 +653,10 @@ function disconnectToken() {
 // ----------------------------
 // Utility
 // ----------------------------
+
+function closeSettingsMenu() {
+    document.getElementById('settingsMenu').classList.remove('open');
+}
 
 function escapeHtml(text) {
     var div = document.createElement('div');
