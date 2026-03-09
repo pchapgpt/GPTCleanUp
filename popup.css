@@ -211,10 +211,15 @@ body {
 }
 
 /* --- Bottom action buttons (archive + delete) --- */
+#cleanupActions {
+    margin-top: auto;
+    flex-shrink: 0;
+    padding: 4px 0 0;
+}
 .cleanup-actions-row {
     display: flex;
     gap: 8px;
-    margin: 4px 0 0;
+    margin: 0;
 }
 .button-action {
     flex: 1;
@@ -760,9 +765,10 @@ body.pinned #loading.visible {
 
 /* --- Analytics Section --- */
 .analytics-section {
-    border-top: 1px solid #333;
-    margin: 6px 0;
-    padding: 8px 0 0;
+    border-bottom: 1px solid #333;
+    margin: 0 0 6px;
+    padding: 0 0 8px;
+    flex-shrink: 0;
 }
 .analytics-header {
     display: flex;
@@ -786,14 +792,19 @@ body.pinned #loading.visible {
     border-radius: 8px;
 }
 .freq-chart-container::-webkit-scrollbar {
-    height: 4px;
+    height: 10px;
 }
 .freq-chart-container::-webkit-scrollbar-track {
-    background: transparent;
+    background: #2a2a2a;
+    border-radius: 5px;
 }
 .freq-chart-container::-webkit-scrollbar-thumb {
-    background: #444;
-    border-radius: 2px;
+    background: #555;
+    border-radius: 5px;
+    border: 2px solid #2a2a2a;
+}
+.freq-chart-container::-webkit-scrollbar-thumb:hover {
+    background: #777;
 }
 .freq-chart-container canvas {
     display: block;
