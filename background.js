@@ -5,5 +5,5 @@
 // for any future background-only tasks.
 
 chrome.runtime.onInstalled.addListener(function() {
-    console.log('ChatGPT History Search extension installed.');
+    console.log('GPTCleanUp extension installed.');
 });
