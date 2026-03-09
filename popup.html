@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Results</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f7f7f7;
+            background: linear-gradient(to bottom right, #be85ff, #7df0ff);
+            color: #333;
+        }
+        .results-container {
+            margin: 10px;
+            padding: 15px;
+            width: 350px;
+            min-height: 100px;
+            max-height: 350px;
+            overflow-y: auto;
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .result-link {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            text-decoration: none;
+            border-bottom: 1px solid #ddd;
+            padding: 12px 10px;
+            transition: background-color 0.3s;
+        }
+        .result-link:hover {
+            background-color: #e9e9e9;
+        }
+        .button {
+            display: block;
+            width: calc(100% - 20px);
+            padding: 10px;
+            margin: 6px auto;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            transition: opacity 0.3s;
+            text-align: center;
+        }
+        #fetchButton {
+            background-color: #007bff;
+        }
+        #fetchButton:hover {
+            opacity: 0.8;
+        }
+        #clearDataButton {
+            background-color: #ff4444;
+        }
+        #clearDataButton:hover {
+            opacity: 0.8;
+        }
+        #getKeyButton {
+            background-color: #44d3ff;
+        }
+        #getKeyButton:hover {
+            opacity: 0.8;
+        }
+        #deleteModeButton {
+            background-color: #ff8800;
+        }
+        #deleteModeButton:hover {
+            opacity: 0.8;
+        }
+        #browseButton {
+            background-color: #6c757d;
+        }
+        #browseButton:hover {
+            opacity: 0.8;
+        }
+        #selectAllButton {
+            background-color: #17a2b8;
+        }
+        #selectAllButton:hover {
+            opacity: 0.8;
+        }
+        #deleteSelectedButton {
+            background-color: #dc3545;
+        }
+        #deleteSelectedButton:hover {
+            opacity: 0.8;
+        }
+        #deleteSelectedButton:disabled {
+            background-color: #999;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        #searchInput {
+            display: none;
+            width: calc(100% - 40px);
+            padding: 10px;
+            margin: 10px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }
+        #loading {
+            display: none;
+            text-align: center;
+        }
+        #loading-spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #333;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+            margin-top: 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Delete mode styles */
+        #deleteModeHeader {
+            display: none;
+            margin: 10px;
+            padding: 10px 12px;
+            background-color: #fff3cd;
+            border-radius: 5px;
+            border-left: 4px solid #ffc107;
+            font-size: 13px;
+        }
+        #deleteModeHeader p {
+            margin: 0;
+        }
+        #deleteModeHeader .header-title {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        #deleteModeHeader .header-subtitle {
+            color: #666;
+        }
+        #selectionCounter {
+            display: none;
+            margin: 6px 10px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 14px;
+            color: #333;
+        }
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+            transition: background-color 0.2s;
+            cursor: pointer;
+        }
+        .checkbox-item:hover {
+            background-color: #f5f5f5;
+        }
+        .checkbox-item input[type="checkbox"] {
+            margin-right: 10px;
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+        .checkbox-item label {
+            flex: 1;
+            cursor: pointer;
+            word-wrap: break-word;
+            color: #333;
+            font-size: 14px;
+        }
+        #deletionProgress {
+            display: none;
+            margin: 10px;
+            padding: 10px 12px;
+            background-color: #e7f3ff;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+            font-size: 13px;
+        }
+        #deletionProgress .progress-title {
+            font-weight: bold;
+            margin: 0 0 4px 0;
+        }
+        #deletionProgress .progress-status {
+            margin: 0;
+            color: #555;
+        }
+
+        /* Confirmation overlay */
+        #confirmOverlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.6);
+            z-index: 100;
+        }
+        #confirmDialog {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            width: 320px;
+            max-height: 400px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        #confirmDialog h3 {
+            margin: 0 0 8px 0;
+            color: #dc3545;
+            font-size: 16px;
+        }
+        #confirmDialog .confirm-count {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            color: #666;
+        }
+        #confirmDialog .confirm-list {
+            flex: 1;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 14px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        #confirmDialog .confirm-list div {
+            padding: 2px 0;
+            border-bottom: 1px solid #eee;
+        }
+        #confirmDialog .confirm-list div:last-child {
+            border-bottom: none;
+        }
+        #confirmDialog .confirm-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        #confirmDialog .confirm-buttons button {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: white;
+        }
+        #confirmCancel {
+            background-color: #6c757d;
+        }
+        #confirmCancel:hover {
+            opacity: 0.8;
+        }
+        #confirmDelete {
+            background-color: #dc3545;
+        }
+        #confirmDelete:hover {
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <!-- Browse mode buttons -->
+    <button id="fetchButton" class="button">Fetch Data</button>
+    <button id="getKeyButton" class="button">Get Key From Chat.OpenAI</button>
+
+    <!-- Delete mode toggle (shown after data loads) -->
+    <button id="deleteModeButton" class="button" style="display: none;">Delete Mode</button>
+
+    <!-- Delete mode controls (hidden by default) -->
+    <button id="browseButton" class="button" style="display: none;">Back to Browse</button>
+    <div id="deleteModeHeader">
+        <p class="header-title">Delete Mode Active</p>
+        <p class="header-subtitle">Select conversations to soft-delete (hides them from ChatGPT)</p>
+    </div>
+    <div id="selectionCounter">Selected: <span id="selectedCount">0</span></div>
+    <button id="selectAllButton" class="button" style="display: none;">Select All (Filtered)</button>
+    <button id="deleteSelectedButton" class="button" style="display: none;" disabled>Delete Selected</button>
+
+    <input type="text" id="searchInput" placeholder="Search...">
+
+    <div id="loading">
+        <div id="loading-spinner"></div>
+        <p>Loading...</p>
+        <p>(This may take upwards of 10 seconds)</p>
+    </div>
+
+    <div id="deletionProgress">
+        <p class="progress-title">Deleting...</p>
+        <p class="progress-status" id="deletionStatus">Preparing...</p>
+    </div>
+
+    <div id="result" class="results-container"></div>
+
+    <button id="clearDataButton" class="button" style="display: none;">Clear Data</button>
+
+    <!-- Confirmation modal -->
+    <div id="confirmOverlay">
+        <div id="confirmDialog">
+            <h3>Confirm Deletion</h3>
+            <p class="confirm-count" id="confirmCount"></p>
+            <div class="confirm-list" id="confirmList"></div>
+            <div class="confirm-buttons">
+                <button id="confirmCancel">Cancel</button>
+                <button id="confirmDelete">Confirm Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>
