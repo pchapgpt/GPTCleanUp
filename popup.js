@@ -8,8 +8,11 @@ let pendingAction = 'delete'; // 'delete' or 'archive'
 let isWorking = false; // true during fetch or archive/delete operations
 
 // Pin detection: pinned if opened as standalone window via ?pinned=true
-var isPinned = window.location.search.indexOf('pinned=true') !== -1;
-var autoFetch = window.location.search.indexOf('autofetch=true') !== -1;
+var urlParams = new URLSearchParams(window.location.search);
+var isPinned = urlParams.get('pinned') === 'true';
+var autoFetch = urlParams.get('autofetch') === 'true';
+var urlKeyword = urlParams.get('keyword') || '';
+var urlFullSearch = urlParams.get('fullsearch') === 'true';
 
 // Selection gesture state
 let lastClickedIndex = -1;       // For shift-click range select
@@ -44,8 +47,17 @@ document.addEventListener('DOMContentLoaded', function() {
         getApiKey();
     });
 
-    document.getElementById('fetchButton').addEventListener('click', function() {
-        fetchConversations();
+    document.getElementById('searchByKeywordButton').addEventListener('click', function() {
+        var kw = document.getElementById('setupKeywordInput').value.trim();
+        if (!kw) {
+            document.getElementById('setupKeywordInput').focus();
+            return;
+        }
+        fetchConversations(kw, getFullSearch());
+    });
+
+    document.getElementById('loadAllButton').addEventListener('click', function() {
+        fetchConversations('', false);
     });
 
     // --- Main view listeners ---
@@ -54,7 +66,22 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     document.getElementById('fetchButton2').addEventListener('click', function() {
-        fetchConversations();
+        fetchConversations(getKeyword(), getFullSearch());
+    });
+
+    document.getElementById('keywordFetchButton').addEventListener('click', function() {
+        fetchConversations(getKeyword(), getFullSearch());
+    });
+
+    // Allow Enter key in keyword inputs to trigger fetch
+    document.getElementById('setupKeywordInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            var kw = document.getElementById('setupKeywordInput').value.trim();
+            if (kw) fetchConversations(kw, getFullSearch());
+        }
+    });
+    document.getElementById('mainKeywordInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') fetchConversations(getKeyword(), getFullSearch());
     });
 
     document.getElementById('cleanupModeButton').addEventListener('click', function() {
@@ -116,9 +143,17 @@ document.addEventListener('DOMContentLoaded', function() {
         handlePinToggle();
     });
 
+    // Pre-fill keyword inputs and full-search checkbox from URL params
+    if (urlKeyword) {
+        syncKeyword(urlKeyword);
+    }
+    if (urlFullSearch) {
+        syncFullSearch(true);
+    }
+
     // Auto-fetch if opened via pin+fetch redirect
     if (autoFetch) {
-        fetchConversations();
+        fetchConversations(urlKeyword, urlFullSearch);
     }
 });
 
@@ -142,7 +177,7 @@ function showSetupDisconnected() {
     hideView(document.getElementById('mainView'));
     hideView(document.getElementById('loading'));
     document.getElementById('getKeyButton').style.display = 'flex';
-    document.getElementById('fetchButton').style.display = 'none';
+    document.getElementById('setupActions').style.display = 'none';
     document.getElementById('connectionStatus').innerHTML =
         '<span class="status-dot disconnected"></span>Not connected';
     document.getElementById('setupHint').textContent = 'Open chatgpt.com, then click Connect.';
@@ -154,11 +189,11 @@ function showSetupConnected() {
     hideView(document.getElementById('mainView'));
     hideView(document.getElementById('loading'));
     document.getElementById('getKeyButton').style.display = 'none';
-    document.getElementById('fetchButton').style.display = 'flex';
+    document.getElementById('setupActions').style.display = 'block';
     document.getElementById('connectionStatus').innerHTML =
         '<span class="status-dot connected"></span>Connected';
     document.getElementById('setupHint').textContent = '';
-    document.getElementById('setupDesc').textContent = 'Ready to load your conversations.';
+    document.getElementById('setupDesc').textContent = 'Choose how to load your conversations.';
 }
 
 function showMainView() {
@@ -186,11 +221,19 @@ function updateMainStatus() {
 
 var loadingTimerInterval = null;
 
-function fetchConversations() {
+function fetchConversations(keyword, fullSearch) {
+    keyword = keyword || '';
+    fullSearch = !!fullSearch;
+    syncKeyword(keyword);
+    syncFullSearch(fullSearch);
+
     // Auto-pin: if not pinned, reopen in a standalone window with autofetch
     if (!isPinned) {
+        var pinUrl = 'popup.html?pinned=true&autofetch=true';
+        if (keyword) pinUrl += '&keyword=' + encodeURIComponent(keyword);
+        if (fullSearch) pinUrl += '&fullsearch=true';
         chrome.windows.create({
-            url: chrome.runtime.getURL('popup.html?pinned=true&autofetch=true'),
+            url: chrome.runtime.getURL(pinUrl),
             type: 'popup',
             width: 360,
             height: 540
@@ -203,7 +246,9 @@ function fetchConversations() {
     hideView(document.getElementById('setupView'));
     hideView(document.getElementById('mainView'));
     showView(document.getElementById('loading'));
-    document.getElementById('loadingCount').textContent = 'Loading conversations...';
+    document.getElementById('loadingCount').textContent = keyword
+        ? 'Searching' + (fullSearch ? ' all messages' : ' titles') + ' for "' + keyword + '"...'
+        : 'Loading conversations...';
     document.getElementById('loadingTimer').textContent = '0s elapsed';
 
     // Start real-time timer
@@ -226,72 +271,158 @@ function fetchConversations() {
         }
 
         var apiKey = result.apiKey;
-        var limit = 100;
-        var maxOffset = 1000;
-        var offset = 0;
         var allData = [];
+        var timedOut = false;
 
-        function fetchPage() {
-            if (offset > maxOffset) {
-                // Done fetching
-                isWorking = false;
-                clearInterval(loadingTimerInterval);
-                hideView(document.getElementById('loading'));
-                currentData = allData;
-                chrome.storage.local.set({apiData: allData}, function() {});
-                showMainView();
-                return;
+        // 60-second timeout
+        var fetchTimeout = setTimeout(function() {
+            timedOut = true;
+            finishFetch(allData, true);
+        }, 60000);
+
+        function finishFetch(data, partial) {
+            clearTimeout(fetchTimeout);
+            isWorking = false;
+            clearInterval(loadingTimerInterval);
+            hideView(document.getElementById('loading'));
+
+            // When searching by keyword (title-only mode), filter to
+            // conversations whose title contains the keyword. The API
+            // searches full message content, so skip this filter when
+            // the user has opted into full-conversation search.
+            if (keyword && !fullSearch && data.length > 0) {
+                var kw = keyword.toLowerCase();
+                data = data.filter(function(item) {
+                    return item.title && item.title.toLowerCase().indexOf(kw) !== -1;
+                });
             }
 
-            var url = 'https://chatgpt.com/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated';
-
-            fetch(url, {
-                method: 'GET',
-                headers: new Headers({
-                    'Authorization': apiKey,
-                    'Content-Type': 'application/json'
-                })
-            })
-            .then(function(response) { return response.json(); })
-            .then(function(data) {
-                if (data && data.items) {
-                    allData = allData.concat(data.items);
-                    document.getElementById('loadingCount').textContent =
-                        'Loaded ' + allData.length + ' conversations...';
-                    // If we got fewer items than the limit, there are no more pages
-                    if (data.items.length < limit) {
-                        isWorking = false;
-                        clearInterval(loadingTimerInterval);
-                        hideView(document.getElementById('loading'));
-                        currentData = allData;
-                        chrome.storage.local.set({apiData: allData}, function() {});
-                        showMainView();
-                        return;
-                    }
+            if (data.length > 0) {
+                currentData = data;
+                chrome.storage.local.set({apiData: data}, function() {});
+                showMainView();
+                if (partial) {
+                    alert('Loading stopped after 60 seconds. Showing ' + data.length + ' conversations loaded so far.');
                 }
-                offset += limit;
-                fetchPage();
-            })
-            .catch(function() {
-                isWorking = false;
-                clearInterval(loadingTimerInterval);
-                hideView(document.getElementById('loading'));
-                if (allData.length > 0) {
-                    // Partial success — use what we got
-                    currentData = allData;
-                    chrome.storage.local.set({apiData: allData}, function() {});
-                    showMainView();
-                } else {
-                    showSetupDisconnected();
-                    document.getElementById('setupDesc').textContent = 'Failed to load. Try reconnecting.';
-                    document.getElementById('setupHint').textContent = '';
-                    document.getElementById('connectionStatus').innerHTML =
-                        '<span class="status-dot disconnected"></span>Connection expired';
-                }
-            });
+            } else {
+                showSetupDisconnected();
+                var noResultsMsg = keyword
+                    ? 'No conversations found for "' + keyword + '"' + (fullSearch ? '.' : ' in the title. Try enabling full conversation search.')
+                    : (partial ? 'Timed out. Try searching by keyword instead.' : 'Failed to load. Try reconnecting.');
+                document.getElementById('setupDesc').textContent = noResultsMsg;
+                document.getElementById('setupHint').textContent = '';
+                document.getElementById('connectionStatus').innerHTML =
+                    '<span class="status-dot disconnected"></span>' + (partial ? 'Timed out' : (keyword ? 'No matches' : 'Connection expired'));
+            }
         }
 
-        fetchPage();
+        // Normalize a search result item to match the format expected by
+        // the rest of the code ({ id, title, create_time, ... }).
+        // The /conversations/search endpoint may return different field names.
+        function normalizeItem(item) {
+            if (!item) return item;
+            return {
+                id: item.id || item.conversation_id || '',
+                title: item.title || item.name || 'Untitled',
+                create_time: item.create_time || item.created_at || item.createTime || null,
+                update_time: item.update_time || item.updated_at || item.updateTime || null
+            };
+        }
+
+        if (keyword) {
+            // --- Keyword search: use the dedicated search endpoint ---
+            var cursor = null;
+            var searchLimit = 100;
+
+            function searchPage() {
+                if (timedOut) return;
+
+                var url = 'https://chatgpt.com/backend-api/conversations/search?query=' + encodeURIComponent(keyword) + '&limit=' + searchLimit;
+                if (cursor) url += '&cursor=' + encodeURIComponent(cursor);
+
+                fetch(url, {
+                    method: 'GET',
+                    headers: new Headers({
+                        'Authorization': apiKey,
+                        'Content-Type': 'application/json'
+                    })
+                })
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    if (timedOut) return;
+                    console.log('[GPTCleanUp] Search response:', JSON.stringify(data).substring(0, 500));
+                    var items = data && data.items ? data.items : (data && Array.isArray(data) ? data : []);
+                    if (items.length > 0) {
+                        var normalized = items.map(normalizeItem);
+                        // Log first item shape for debugging
+                        console.log('[GPTCleanUp] First raw item keys:', Object.keys(items[0]).join(', '));
+                        console.log('[GPTCleanUp] First normalized item:', JSON.stringify(normalized[0]));
+                        allData = allData.concat(normalized);
+                        document.getElementById('loadingCount').textContent =
+                            'Found ' + allData.length + ' conversations...';
+                    }
+                    // Check for next page via cursor
+                    if (data && data.cursor && items.length > 0) {
+                        cursor = data.cursor;
+                        searchPage();
+                    } else {
+                        finishFetch(allData, false);
+                    }
+                })
+                .catch(function(err) {
+                    console.error('[GPTCleanUp] Search error:', err);
+                    if (timedOut) return;
+                    finishFetch(allData, allData.length > 0);
+                });
+            }
+
+            searchPage();
+        } else {
+            // --- Load all: paginate the conversations list endpoint ---
+            var limit = 100;
+            var maxOffset = 1000;
+            var offset = 0;
+
+            function fetchPage() {
+                if (timedOut) return;
+
+                if (offset > maxOffset) {
+                    finishFetch(allData, false);
+                    return;
+                }
+
+                var url = 'https://chatgpt.com/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated';
+
+                fetch(url, {
+                    method: 'GET',
+                    headers: new Headers({
+                        'Authorization': apiKey,
+                        'Content-Type': 'application/json'
+                    })
+                })
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    if (timedOut) return;
+                    if (data && data.items) {
+                        allData = allData.concat(data.items);
+                        document.getElementById('loadingCount').textContent =
+                            'Loaded ' + allData.length + ' conversations...';
+                        if (data.items.length < limit) {
+                            finishFetch(allData, false);
+                            return;
+                        }
+                    }
+                    offset += limit;
+                    fetchPage();
+                })
+                .catch(function() {
+                    if (timedOut) return;
+                    finishFetch(allData, allData.length > 0);
+                });
+            }
+
+            fetchPage();
+        }
     });
 }
 
@@ -776,6 +907,37 @@ function handlePinToggle() {
 // ----------------------------
 // Utility
 // ----------------------------
+
+// Read keyword from whichever input is currently visible
+function getKeyword() {
+    var setupInput = document.getElementById('setupKeywordInput');
+    var mainInput = document.getElementById('mainKeywordInput');
+    // Prefer the one that's visible; fall back to whichever has a value
+    if (document.getElementById('mainView').style.display !== 'none' && mainInput.value.trim()) {
+        return mainInput.value.trim();
+    }
+    if (setupInput.value.trim()) {
+        return setupInput.value.trim();
+    }
+    return mainInput.value.trim() || '';
+}
+
+// Keep both keyword inputs in sync
+function syncKeyword(value) {
+    document.getElementById('setupKeywordInput').value = value;
+    document.getElementById('mainKeywordInput').value = value;
+}
+
+// Read and sync the full-search checkbox
+function getFullSearch() {
+    var setupCb = document.getElementById('setupFullSearchCheckbox');
+    var mainCb = document.getElementById('mainFullSearchCheckbox');
+    return setupCb.checked || mainCb.checked;
+}
+function syncFullSearch(value) {
+    document.getElementById('setupFullSearchCheckbox').checked = value;
+    document.getElementById('mainFullSearchCheckbox').checked = value;
+}
 
 function closeSettingsMenu() {
     document.getElementById('settingsMenu').classList.remove('open');

@@ -565,6 +565,111 @@
             color: #ff6b7a;
         }
 
+        /* --- Setup two-option layout --- */
+        .setup-option {
+            margin: 6px 0;
+        }
+        .setup-divider {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            color: #555;
+            font-size: 12px;
+        }
+        .setup-divider::before,
+        .setup-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background-color: #333;
+        }
+        .setup-divider span {
+            padding: 0 10px;
+        }
+
+        /* --- Keyword input --- */
+        .keyword-input {
+            display: block;
+            width: 100%;
+            height: 32px;
+            padding: 5px 10px;
+            margin: 3px 0;
+            border-radius: 8px;
+            border: 1px solid #3a3a3a;
+            background-color: #2f2f2f;
+            color: #ececec;
+            font-size: 13px;
+            font-family: inherit;
+            line-height: 18px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .keyword-input:focus {
+            border-color: #10a37f;
+        }
+        .keyword-input::placeholder {
+            color: #777;
+        }
+        #setupKeywordInput {
+            width: calc(100% - 8px);
+            margin: 3px auto;
+        }
+        .keyword-row {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+            margin: 2px 0;
+        }
+        .keyword-row .keyword-input {
+            flex: 1;
+            margin: 0;
+        }
+        .keyword-row .button-inline {
+            flex-shrink: 0;
+            padding: 6px 10px;
+            font-weight: 600;
+            color: #10a37f;
+        }
+        .search-option-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: 6px 0 2px;
+            font-size: 12px;
+            color: #888;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .search-option-row input[type="checkbox"] {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #555;
+            border-radius: 3px;
+            background: transparent;
+            cursor: pointer;
+            flex-shrink: 0;
+            position: relative;
+            transition: all 0.15s;
+        }
+        .search-option-row input[type="checkbox"]:checked {
+            background-color: #10a37f;
+            border-color: #10a37f;
+        }
+        .search-option-row input[type="checkbox"]:checked::after {
+            content: '';
+            position: absolute;
+            left: 3px;
+            top: 0px;
+            width: 4px;
+            height: 8px;
+            border: solid #fff;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+        }
+
         /* --- Pin button --- */
         .pin-button {
             display: flex;
@@ -637,7 +742,19 @@
         <h2>GPTCleanUp</h2>
         <p class="setup-desc" id="setupDesc">Search and manage your ChatGPT conversations.</p>
         <button id="getKeyButton" class="button button-accent">Connect to ChatGPT</button>
-        <button id="fetchButton" class="button button-primary" style="display: none;">Load Conversations</button>
+        <div id="setupActions" style="display: none;">
+            <div class="setup-option">
+                <input type="text" id="setupKeywordInput" class="keyword-input" placeholder="Enter keyword...">
+                <label class="search-option-row">
+                    <input type="checkbox" id="setupFullSearchCheckbox">
+                    <span>Search full conversation (not just title)</span>
+                </label>
+                <button id="searchByKeywordButton" class="button button-accent">Search by Keyword</button>
+            </div>
+            <div class="setup-divider"><span>or</span></div>
+            <button id="loadAllButton" class="button button-primary">Load All Conversations</button>
+            <p class="setup-step">Loads up to 1,000 most recent conversations</p>
+        </div>
         <div id="connectionStatus"></div>
         <p class="setup-step" id="setupHint">Open chatgpt.com, then click Connect.</p>
     </div>
@@ -674,6 +791,14 @@
 
         <!-- Browse mode toolbar -->
         <div id="browseToolbar">
+            <div class="keyword-row">
+                <input type="text" id="mainKeywordInput" class="keyword-input" placeholder="Keyword filter (optional)">
+                <button id="keywordFetchButton" class="button-inline" title="Reload with keyword">Load</button>
+            </div>
+            <label class="search-option-row">
+                <input type="checkbox" id="mainFullSearchCheckbox">
+                <span>Search full conversation</span>
+            </label>
             <button id="cleanupModeButton" class="button button-subtle">Cleanup Mode</button>
         </div>
 
