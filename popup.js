@@ -1,11 +1,12 @@
 // State
-let apiKeySaved = false;
-let deleteMode = false;
-let selectedIds = new Set();
-let currentData = [];
-let pendingDeleteIds = [];
-let pendingAction = 'delete'; // 'delete' or 'archive'
-let isWorking = false; // true during fetch or archive/delete operations
+var apiKeySaved = false;
+var deleteMode = false;
+var selectedIds = new Set();
+var currentData = [];
+var pendingDeleteIds = [];
+var pendingAction = 'delete'; // 'delete' or 'archive'
+var isWorking = false; // true during fetch or archive/delete operations
+var analyticsVisible = false;
 
 // Pin detection: pinned if opened as standalone window via ?pinned=true
 var urlParams = new URLSearchParams(window.location.search);
@@ -13,34 +14,47 @@ var isPinned = urlParams.get('pinned') === 'true';
 var autoFetch = urlParams.get('autofetch') === 'true';
 var urlKeyword = urlParams.get('keyword') || '';
 var urlFullSearch = urlParams.get('fullsearch') === 'true';
+var urlFetchRange = urlParams.get('fetchrange') || ''; // 'month', 'quarter', 'year', 'older'
 
 // Selection gesture state
-let lastClickedIndex = -1;       // For shift-click range select
-let isDragging = false;           // For drag select
-let dragCheckState = true;        // Whether drag is checking or unchecking
+var lastClickedIndex = -1;
+var isDragging = false;
+var dragCheckState = true;
 
 // ----------------------------
 // Initialization
 // ----------------------------
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Check stored state and show the right view
-    // (skip if autoFetch — fetchConversations() will take over immediately)
-    if (!autoFetch) {
-        chrome.storage.local.get(['apiKey', 'apiData'], function(result) {
-            if (result.apiData && result.apiData.length > 0) {
-                // Have data — go straight to main view
-                currentData = result.apiData;
-                showMainView();
-            } else if (result.apiKey) {
-                // Have key but no data — show fetch button
-                showSetupConnected();
-            } else {
-                // Fresh install — show connect prompt
-                showSetupDisconnected();
-            }
-        });
-    }
+    // Initialize IndexedDB, then load data
+    openDB().then(function() {
+        // Migrate old chrome.storage data to IndexedDB (one-time)
+        return dbMigrateFromChromeStorage();
+    }).then(function() {
+        // Check stored state and show the right view
+        // (skip if autoFetch — fetchConversations() will take over immediately)
+        if (!autoFetch && !urlFetchRange) {
+            chrome.storage.local.get(['apiKey'], function(result) {
+                if (result.apiKey) {
+                    // Try loading from IndexedDB
+                    dbGetAllConversations().then(function(data) {
+                        if (data && data.length > 0) {
+                            currentData = data;
+                            showMainView();
+                        } else {
+                            showSetupConnected();
+                        }
+                    });
+                } else {
+                    showSetupDisconnected();
+                }
+            });
+        }
+    }).catch(function(err) {
+        console.error('[GPTCleanUp] DB init error:', err);
+        // Fallback: try loading without DB
+        showSetupDisconnected();
+    });
 
     // --- Setup view listeners ---
     document.getElementById('getKeyButton').addEventListener('click', function() {
@@ -143,6 +157,32 @@ document.addEventListener('DOMContentLoaded', function() {
         handlePinToggle();
     });
 
+    // --- Analytics toggle ---
+    document.getElementById('toggleAnalyticsButton').addEventListener('click', function() {
+        analyticsVisible = !analyticsVisible;
+        var section = document.getElementById('analyticsSection');
+        if (analyticsVisible) {
+            updateAnalytics(currentData);
+            section.style.display = 'block';
+        } else {
+            section.style.display = 'none';
+        }
+    });
+
+    // --- Quick fetch buttons ---
+    document.getElementById('fetchThisMonth').addEventListener('click', function() {
+        fetchDateRangeByPeriod('month');
+    });
+    document.getElementById('fetchThisQuarter').addEventListener('click', function() {
+        fetchDateRangeByPeriod('quarter');
+    });
+    document.getElementById('fetchThisYear').addEventListener('click', function() {
+        fetchDateRangeByPeriod('year');
+    });
+    document.getElementById('fetchOlder').addEventListener('click', function() {
+        fetchOlderConversations();
+    });
+
     // Pre-fill keyword inputs and full-search checkbox from URL params
     if (urlKeyword) {
         syncKeyword(urlKeyword);
@@ -155,14 +195,21 @@ document.addEventListener('DOMContentLoaded', function() {
     if (autoFetch) {
         fetchConversations(urlKeyword, urlFullSearch);
     }
+
+    // Auto-fetch date range if opened via pin redirect with fetchrange param
+    if (urlFetchRange) {
+        if (urlFetchRange === 'older') {
+            fetchOlderConversations();
+        } else {
+            fetchDateRangeByPeriod(urlFetchRange);
+        }
+    }
 });
 
 // ----------------------------
 // View transitions
 // ----------------------------
 
-// Show/hide a top-level view. In pinned mode, uses 'visible' class
-// so that the CSS flex rules only apply when the element is actually shown.
 function showView(el) {
     el.style.display = 'block';
     el.classList.add('visible');
@@ -202,6 +249,13 @@ function showMainView() {
     hideView(document.getElementById('loading'));
     updateMainStatus();
     displayData(currentData);
+
+    // Update analytics if visible
+    if (analyticsVisible) {
+        setTimeout(function() {
+            updateAnalytics(currentData);
+        }, 50);
+    }
 }
 
 function updateMainStatus() {
@@ -211,12 +265,22 @@ function updateMainStatus() {
     } else {
         countEl.textContent = 'No conversations loaded';
     }
-    // Show connected dot (green if we have data, implying valid key)
     document.getElementById('mainConnectionDot').className = 'status-dot connected';
 }
 
 // ----------------------------
-// Fetch Data (directly from popup — no background.js needed)
+// Reload from IndexedDB (after upsert/delete/archive)
+// ----------------------------
+
+function reloadFromDB() {
+    return dbGetAllConversations().then(function(data) {
+        currentData = data;
+        return data;
+    });
+}
+
+// ----------------------------
+// Fetch Data (from ChatGPT API, upsert into IndexedDB)
 // ----------------------------
 
 var loadingTimerInterval = null;
@@ -247,7 +311,7 @@ function fetchConversations(keyword, fullSearch) {
     hideView(document.getElementById('mainView'));
     showView(document.getElementById('loading'));
     document.getElementById('loadingCount').textContent = keyword
-        ? 'Searching' + (fullSearch ? ' all messages' : ' titles') + ' for "' + keyword + '"...'
+        ? (fullSearch ? 'Searching all messages for "' + keyword + '"...' : 'Scanning titles for "' + keyword + '"...')
         : 'Loading conversations...';
     document.getElementById('loadingTimer').textContent = '0s elapsed';
 
@@ -264,8 +328,6 @@ function fetchConversations(keyword, fullSearch) {
             isWorking = false;
             clearInterval(loadingTimerInterval);
             hideView(document.getElementById('loading'));
-            document.getElementById('setupDesc').textContent = 'No API key found. Please reconnect.';
-            document.getElementById('setupHint').textContent = '';
             showSetupDisconnected();
             return;
         }
@@ -286,39 +348,41 @@ function fetchConversations(keyword, fullSearch) {
             clearInterval(loadingTimerInterval);
             hideView(document.getElementById('loading'));
 
-            // When searching by keyword (title-only mode), filter to
-            // conversations whose title contains the keyword. The API
-            // searches full message content, so skip this filter when
-            // the user has opted into full-conversation search.
-            if (keyword && !fullSearch && data.length > 0) {
-                var kw = keyword.toLowerCase();
-                data = data.filter(function(item) {
-                    return item.title && item.title.toLowerCase().indexOf(kw) !== -1;
-                });
-            }
-
             if (data.length > 0) {
-                currentData = data;
-                chrome.storage.local.set({apiData: data}, function() {});
-                showMainView();
-                if (partial) {
-                    alert('Loading stopped after 60 seconds. Showing ' + data.length + ' conversations loaded so far.');
-                }
+                // Upsert fetched data into IndexedDB, then reload full dataset
+                dbUpsertConversations(data).then(function() {
+                    return reloadFromDB();
+                }).then(function() {
+                    showMainView();
+                    if (partial) {
+                        alert('Loading stopped after 60 seconds. Showing ' + currentData.length + ' conversations.');
+                    }
+                });
             } else {
-                showSetupDisconnected();
-                var noResultsMsg = keyword
-                    ? 'No conversations found for "' + keyword + '"' + (fullSearch ? '.' : ' in the title. Try enabling full conversation search.')
-                    : (partial ? 'Timed out. Try searching by keyword instead.' : 'Failed to load. Try reconnecting.');
-                document.getElementById('setupDesc').textContent = noResultsMsg;
-                document.getElementById('setupHint').textContent = '';
-                document.getElementById('connectionStatus').innerHTML =
-                    '<span class="status-dot disconnected"></span>' + (partial ? 'Timed out' : (keyword ? 'No matches' : 'Connection expired'));
+                // Check if we have existing data in DB
+                reloadFromDB().then(function(existingData) {
+                    if (existingData && existingData.length > 0) {
+                        showMainView();
+                        var msg = keyword
+                            ? 'No new conversations found for "' + keyword + '". Showing cached data.'
+                            : (partial ? 'Timed out. Showing cached data.' : 'Failed to load. Showing cached data.');
+                        // Show a brief notification without disrupting the view
+                        console.log('[GPTCleanUp] ' + msg);
+                    } else {
+                        showSetupDisconnected();
+                        var noResultsMsg = keyword
+                            ? 'No conversations found for "' + keyword + '"' + (fullSearch ? '.' : ' in the title.')
+                            : (partial ? 'Timed out. Try searching by keyword instead.' : 'Failed to load. Try reconnecting.');
+                        document.getElementById('setupDesc').textContent = noResultsMsg;
+                        document.getElementById('setupHint').textContent = '';
+                        document.getElementById('connectionStatus').innerHTML =
+                            '<span class="status-dot disconnected"></span>' + (partial ? 'Timed out' : (keyword ? 'No matches' : 'Connection expired'));
+                    }
+                });
             }
         }
 
-        // Normalize a search result item to match the format expected by
-        // the rest of the code ({ id, title, create_time, ... }).
-        // The /conversations/search endpoint may return different field names.
+        // Normalize a search result item
         function normalizeItem(item) {
             if (!item) return item;
             return {
@@ -329,8 +393,8 @@ function fetchConversations(keyword, fullSearch) {
             };
         }
 
-        if (keyword) {
-            // --- Keyword search: use the dedicated search endpoint ---
+        if (keyword && fullSearch) {
+            // --- Full-conversation search: use the dedicated search endpoint ---
             var cursor = null;
             var searchLimit = 100;
 
@@ -354,14 +418,12 @@ function fetchConversations(keyword, fullSearch) {
                     var items = data && data.items ? data.items : (data && Array.isArray(data) ? data : []);
                     if (items.length > 0) {
                         var normalized = items.map(normalizeItem);
-                        // Log first item shape for debugging
                         console.log('[GPTCleanUp] First raw item keys:', Object.keys(items[0]).join(', '));
                         console.log('[GPTCleanUp] First normalized item:', JSON.stringify(normalized[0]));
                         allData = allData.concat(normalized);
                         document.getElementById('loadingCount').textContent =
                             'Found ' + allData.length + ' conversations...';
                     }
-                    // Check for next page via cursor
                     if (data && data.cursor && items.length > 0) {
                         cursor = data.cursor;
                         searchPage();
@@ -377,6 +439,61 @@ function fetchConversations(keyword, fullSearch) {
             }
 
             searchPage();
+        } else if (keyword && !fullSearch) {
+            // --- Title-only search: load all and filter by title ---
+            var limit = 100;
+            var maxOffset = 1000;
+            var offset = 0;
+            var kw = keyword.toLowerCase();
+
+            function fetchTitlePage() {
+                if (timedOut) return;
+
+                if (offset > maxOffset) {
+                    finishFetch(allData, false);
+                    return;
+                }
+
+                var url = 'https://chatgpt.com/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated';
+
+                fetch(url, {
+                    method: 'GET',
+                    headers: new Headers({
+                        'Authorization': apiKey,
+                        'Content-Type': 'application/json'
+                    })
+                })
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    if (timedOut) return;
+                    if (data && data.items) {
+                        // Upsert ALL items into DB (not just matches) to build full history
+                        dbUpsertConversations(data.items);
+                        // Filter to title matches for display
+                        var matches = data.items.filter(function(item) {
+                            return item.title && item.title.toLowerCase().indexOf(kw) !== -1;
+                        });
+                        allData = allData.concat(matches);
+                        document.getElementById('loadingCount').textContent =
+                            'Scanned ' + (offset + data.items.length) + ' conversations, found ' + allData.length + ' title matches...';
+                        if (data.items.length < limit) {
+                            finishFetch(allData, false);
+                            return;
+                        }
+                    } else {
+                        finishFetch(allData, allData.length > 0);
+                        return;
+                    }
+                    offset += limit;
+                    fetchTitlePage();
+                })
+                .catch(function() {
+                    if (timedOut) return;
+                    finishFetch(allData, allData.length > 0);
+                });
+            }
+
+            fetchTitlePage();
         } else {
             // --- Load all: paginate the conversations list endpoint ---
             var limit = 100;
@@ -423,6 +540,217 @@ function fetchConversations(keyword, fullSearch) {
 
             fetchPage();
         }
+    });
+}
+
+// ----------------------------
+// Date Range Fetching (period buttons + fill-in-the-gaps)
+// ----------------------------
+
+function fetchDateRangeByPeriod(period) {
+    var now = new Date();
+    var start;
+
+    if (period === 'month') {
+        start = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (period === 'quarter') {
+        var quarterStart = Math.floor(now.getMonth() / 3) * 3;
+        start = new Date(now.getFullYear(), quarterStart, 1);
+    } else if (period === 'year') {
+        start = new Date(now.getFullYear(), 0, 1);
+    } else {
+        // Default to this month
+        start = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    var startTime = start.getTime() / 1000; // unix seconds
+    var endTime = now.getTime() / 1000;
+
+    fetchDateRange(startTime, endTime, 'Fetching ' + period + '...');
+}
+
+function fetchOlderConversations() {
+    // Look at earliest record in DB and fetch before that
+    dbGetDateRange().then(function(range) {
+        var endTime;
+        if (range && range.earliest) {
+            endTime = range.earliest; // already in seconds if stored as seconds
+            // If stored in milliseconds, convert
+            if (endTime > 1e12) endTime = endTime / 1000;
+        } else {
+            // No data yet — fetch from beginning of time to now
+            endTime = Date.now() / 1000;
+        }
+
+        // Go back 6 months from the earliest known conversation
+        var startTime = endTime - (180 * 24 * 60 * 60);
+
+        fetchDateRange(startTime, endTime, 'Fetching older conversations...');
+    });
+}
+
+function fetchDateRange(startTime, endTime, loadingMsg) {
+    // Auto-pin if not pinned
+    if (!isPinned) {
+        // Determine which period this is for URL param
+        var rangeParam = 'custom';
+        var now = Date.now() / 1000;
+        if (endTime >= now - 60) {
+            var start = new Date(startTime * 1000);
+            var nowDate = new Date();
+            if (start.getMonth() === nowDate.getMonth() && start.getFullYear() === nowDate.getFullYear()) rangeParam = 'month';
+            else if (start.getMonth() === Math.floor(nowDate.getMonth() / 3) * 3 && start.getFullYear() === nowDate.getFullYear()) rangeParam = 'quarter';
+            else if (start.getMonth() === 0 && start.getDate() === 1 && start.getFullYear() === nowDate.getFullYear()) rangeParam = 'year';
+        }
+
+        chrome.windows.create({
+            url: chrome.runtime.getURL('popup.html?pinned=true&fetchrange=' + rangeParam),
+            type: 'popup',
+            width: 360,
+            height: 540
+        });
+        window.close();
+        return;
+    }
+
+    isWorking = true;
+    hideView(document.getElementById('setupView'));
+    hideView(document.getElementById('mainView'));
+    showView(document.getElementById('loading'));
+    document.getElementById('loadingCount').textContent = loadingMsg || 'Fetching conversations...';
+    document.getElementById('loadingTimer').textContent = '0s elapsed';
+
+    var startTimeMs = Date.now();
+    if (loadingTimerInterval) clearInterval(loadingTimerInterval);
+    loadingTimerInterval = setInterval(function() {
+        var elapsed = Math.floor((Date.now() - startTimeMs) / 1000);
+        document.getElementById('loadingTimer').textContent = elapsed + 's elapsed';
+    }, 1000);
+
+    chrome.storage.local.get(['apiKey'], function(result) {
+        if (!result.apiKey) {
+            isWorking = false;
+            clearInterval(loadingTimerInterval);
+            hideView(document.getElementById('loading'));
+            showSetupDisconnected();
+            return;
+        }
+
+        var apiKey = result.apiKey;
+        var allData = [];
+        var timedOut = false;
+        var fetchTimeout = setTimeout(function() {
+            timedOut = true;
+            finishRangeFetch(allData, true);
+        }, 120000); // 2 min timeout for range fetches
+
+        function finishRangeFetch(data, partial) {
+            clearTimeout(fetchTimeout);
+            isWorking = false;
+            clearInterval(loadingTimerInterval);
+            hideView(document.getElementById('loading'));
+
+            if (data.length > 0) {
+                dbUpsertConversations(data).then(function() {
+                    return reloadFromDB();
+                }).then(function() {
+                    showMainView();
+                    if (partial) {
+                        alert('Loading stopped after timeout. ' + data.length + ' conversations saved.');
+                    }
+                });
+            } else {
+                // No new data found in range, show existing DB data
+                reloadFromDB().then(function(existing) {
+                    if (existing && existing.length > 0) {
+                        showMainView();
+                    } else {
+                        showSetupConnected();
+                    }
+                });
+            }
+        }
+
+        // Paginate through conversations, keeping only those in the date range
+        var limit = 100;
+        var offset = 0;
+        var maxOffset = 5000; // Allow scanning more for date range fetches
+        var foundInRange = 0;
+        var passedRange = false; // Optimization: stop if we've gone past the range
+
+        function fetchRangePage() {
+            if (timedOut || passedRange) {
+                finishRangeFetch(allData, false);
+                return;
+            }
+
+            if (offset > maxOffset) {
+                finishRangeFetch(allData, false);
+                return;
+            }
+
+            var url = 'https://chatgpt.com/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated';
+
+            fetch(url, {
+                method: 'GET',
+                headers: new Headers({
+                    'Authorization': apiKey,
+                    'Content-Type': 'application/json'
+                })
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                if (timedOut) return;
+                if (data && data.items && data.items.length > 0) {
+                    var inRange = [];
+                    for (var i = 0; i < data.items.length; i++) {
+                        var item = data.items[i];
+                        var ct = item.create_time || 0;
+                        // Convert to seconds if needed
+                        if (ct > 1e12) ct = ct / 1000;
+
+                        if (ct >= startTime && ct <= endTime) {
+                            inRange.push(item);
+                        } else if (ct < startTime) {
+                            // We've gone past our range (since ordered by updated desc)
+                            // But create_time order may differ, so keep scanning a bit
+                        }
+                    }
+
+                    allData = allData.concat(data.items); // Store everything we see
+                    foundInRange += inRange.length;
+
+                    document.getElementById('loadingCount').textContent =
+                        'Scanned ' + (offset + data.items.length) + ', found ' + foundInRange + ' in range...';
+
+                    // Check if last item's create_time is before our start range
+                    var lastItem = data.items[data.items.length - 1];
+                    var lastCt = lastItem.create_time || 0;
+                    if (lastCt > 1e12) lastCt = lastCt / 1000;
+                    if (lastCt < startTime && data.items.length >= limit) {
+                        // All remaining items are older than our range
+                        passedRange = true;
+                    }
+
+                    if (data.items.length < limit) {
+                        finishRangeFetch(allData, false);
+                        return;
+                    }
+                } else {
+                    finishRangeFetch(allData, false);
+                    return;
+                }
+
+                offset += limit;
+                fetchRangePage();
+            })
+            .catch(function() {
+                if (timedOut) return;
+                finishRangeFetch(allData, allData.length > 0);
+            });
+        }
+
+        fetchRangePage();
     });
 }
 
@@ -485,9 +813,6 @@ function renderResultsAsDelete(items) {
         var resultEl = document.getElementById('result');
         var checkboxes = resultEl.querySelectorAll('input[type="checkbox"]');
 
-        // Prevent ALL native checkbox/label toggle — we manage state manually
-        // via setCheckbox(). This avoids race conditions between mousedown
-        // (where we read state) and the deferred native click toggle.
         resultEl.addEventListener('click', function(e) {
             var target = e.target;
             if (target.type === 'checkbox' || target.tagName === 'LABEL') {
@@ -495,21 +820,17 @@ function renderResultsAsDelete(items) {
             }
         });
 
-        // --- All selection logic lives in mousedown on the row ---
-        // This fires regardless of whether the user clicks the checkbox or label,
-        // and handles normal click, shift-click range, and drag-start uniformly.
         var rows = resultEl.querySelectorAll('.checkbox-item');
         for (var i = 0; i < rows.length; i++) {
             (function(row) {
                 row.addEventListener('mousedown', function(e) {
                     if (e.button !== 0) return;
-                    e.preventDefault(); // prevent text selection
+                    e.preventDefault();
 
                     var cb = row.querySelector('input[type="checkbox"]');
                     var currentIndex = parseInt(row.getAttribute('data-index'));
 
                     if (e.shiftKey && lastClickedIndex !== -1 && lastClickedIndex !== currentIndex) {
-                        // --- Shift-click range selection ---
                         var start = Math.min(lastClickedIndex, currentIndex);
                         var end = Math.max(lastClickedIndex, currentIndex);
                         var anchorChecked = checkboxes[lastClickedIndex].checked;
@@ -519,7 +840,6 @@ function renderResultsAsDelete(items) {
                         }
                         updateSelectionCounter();
                     } else {
-                        // --- Normal click: toggle + start drag ---
                         isDragging = true;
                         setCheckbox(cb, !cb.checked);
                         dragCheckState = cb.checked;
@@ -538,9 +858,7 @@ function renderResultsAsDelete(items) {
             })(rows[i]);
         }
 
-        // End drag on mouseup anywhere
         document.addEventListener('mouseup', onDragEnd);
-        // Prevent text selection while dragging inside results
         resultEl.addEventListener('selectstart', function(e) {
             if (isDragging) e.preventDefault();
         });
@@ -550,7 +868,6 @@ function renderResultsAsDelete(items) {
     updateSelectionCounter();
 }
 
-// Helper: set a checkbox to a specific state and sync selectedIds
 function setCheckbox(checkbox, checked) {
     checkbox.checked = checked;
     var id = checkbox.getAttribute('data-id');
@@ -576,16 +893,18 @@ function toggleCleanupMode(on) {
     deleteMode = on;
     selectedIds.clear();
 
-    // Toggle toolbars
     document.getElementById('browseToolbar').style.display = on ? 'none' : 'block';
     document.getElementById('cleanupToolbar').style.display = on ? 'block' : 'none';
     document.getElementById('cleanupActions').style.display = on ? 'block' : 'none';
     document.getElementById('fetchButton2').style.display = on ? 'none' : '';
+    document.getElementById('toggleAnalyticsButton').style.display = on ? 'none' : '';
     document.getElementById('settingsWrapper').style.display = on ? 'none' : '';
     document.getElementById('deletionProgress').style.display = 'none';
+    if (on) {
+        document.getElementById('analyticsSection').style.display = 'none';
+    }
     closeSettingsMenu();
 
-    // Re-render with current filter
     var filter = document.getElementById('searchInput').value;
     displayData(currentData, filter);
 }
@@ -621,7 +940,6 @@ function selectAllFiltered() {
     }
 
     if (allChecked) {
-        // Deselect all
         for (var i = 0; i < checkboxes.length; i++) {
             checkboxes[i].checked = false;
             selectedIds.delete(checkboxes[i].getAttribute('data-id'));
@@ -723,12 +1041,15 @@ function executeAction() {
             .then(function(response) {
                 if (response.ok) {
                     successIds.push(id);
-                    // Remove from cached data immediately
-                    currentData = currentData.filter(function(item) {
-                        return item.id !== id;
+                    // Mark in IndexedDB
+                    var dbOp = isArchive ? dbMarkArchived(id) : dbMarkDeleted(id);
+                    dbOp.then(function() {
+                        // Remove from in-memory array for immediate UI update
+                        currentData = currentData.filter(function(item) {
+                            return item.id !== id;
+                        });
+                        selectedIds.delete(id);
                     });
-                    selectedIds.delete(id);
-                    chrome.storage.local.set({apiData: currentData}, function() {});
                 } else {
                     failedIds.push(id);
                 }
@@ -760,8 +1081,6 @@ function onActionComplete(successIds, failedIds) {
     var isArchive = (pendingAction === 'archive');
     var actionPast = isArchive ? 'archived' : 'deleted';
 
-    // Successful items already removed incrementally during processing.
-    // Clear remaining selections (failed items).
     selectedIds.clear();
 
     // Update count and re-render
@@ -788,19 +1107,18 @@ function getApiKey() {
     }
 
     chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
-        const currentTab = tabs[0];
-        const currentUrl = new URL(currentTab.url);
+        var currentTab = tabs[0];
+        var currentUrl = new URL(currentTab.url);
 
         if (currentUrl.hostname !== 'chat.openai.com' && currentUrl.hostname !== 'chatgpt.com') {
             document.getElementById('setupHint').textContent = 'Please navigate to chatgpt.com first.';
             return;
         }
 
-        // Show connecting state
         document.getElementById('setupHint').textContent = 'Connecting... reload will capture your session.';
         document.getElementById('getKeyButton').disabled = true;
 
-        const onBeforeSendHeadersListener = function(details) {
+        var onBeforeSendHeadersListener = function(details) {
             for (var i = 0; i < details.requestHeaders.length; ++i) {
                 if (details.requestHeaders[i].name === 'Authorization') {
                     var apiKey = details.requestHeaders[i].value;
@@ -829,22 +1147,18 @@ function getApiKey() {
 // ----------------------------
 
 function clearData() {
-    chrome.storage.local.remove(['apiData'], function() {
-        var error = chrome.runtime.lastError;
-        if (error) {
-            console.error(error);
-        } else {
-            currentData = [];
-            deleteMode = false;
-            // Go back to setup view — key is still saved so show fetch
-            chrome.storage.local.get(['apiKey'], function(result) {
-                if (result.apiKey) {
-                    showSetupConnected();
-                } else {
-                    showSetupDisconnected();
-                }
-            });
-        }
+    dbClearAll().then(function() {
+        currentData = [];
+        deleteMode = false;
+        chrome.storage.local.get(['apiKey'], function(result) {
+            if (result.apiKey) {
+                showSetupConnected();
+            } else {
+                showSetupDisconnected();
+            }
+        });
+    }).catch(function(err) {
+        console.error('[GPTCleanUp] Clear error:', err);
     });
 }
 
@@ -854,11 +1168,13 @@ function clearData() {
 
 function disconnectToken() {
     if (!confirm('Disconnect from ChatGPT? This will remove your saved session token and cached data.')) return;
-    chrome.storage.local.remove(['apiKey', 'apiData'], function() {
-        apiKeySaved = false;
-        currentData = [];
-        deleteMode = false;
-        showSetupDisconnected();
+    dbClearAll().then(function() {
+        chrome.storage.local.remove(['apiKey'], function() {
+            apiKeySaved = false;
+            currentData = [];
+            deleteMode = false;
+            showSetupDisconnected();
+        });
     });
 }
 
@@ -874,7 +1190,6 @@ function initPinState() {
 
     if (isPinned) {
         document.body.classList.add('pinned');
-        // Swap both pin buttons to show "unpin" icon + title
         var pinButtons = [document.getElementById('setupPinButton'), document.getElementById('mainPinButton')];
         for (var i = 0; i < pinButtons.length; i++) {
             pinButtons[i].innerHTML = unpinSvg;
@@ -885,7 +1200,6 @@ function initPinState() {
 
 function handlePinToggle() {
     if (isPinned) {
-        // Unpin: warn if work is in progress
         if (isWorking) {
             if (!confirm('Closing while working will interrupt the current process. Close anyway?')) {
                 return;
@@ -893,7 +1207,6 @@ function handlePinToggle() {
         }
         window.close();
     } else {
-        // Pin: open popup.html in a standalone window
         chrome.windows.create({
             url: chrome.runtime.getURL('popup.html?pinned=true'),
             type: 'popup',
@@ -908,11 +1221,9 @@ function handlePinToggle() {
 // Utility
 // ----------------------------
 
-// Read keyword from whichever input is currently visible
 function getKeyword() {
     var setupInput = document.getElementById('setupKeywordInput');
     var mainInput = document.getElementById('mainKeywordInput');
-    // Prefer the one that's visible; fall back to whichever has a value
     if (document.getElementById('mainView').style.display !== 'none' && mainInput.value.trim()) {
         return mainInput.value.trim();
     }
@@ -922,13 +1233,11 @@ function getKeyword() {
     return mainInput.value.trim() || '';
 }
 
-// Keep both keyword inputs in sync
 function syncKeyword(value) {
     document.getElementById('setupKeywordInput').value = value;
     document.getElementById('mainKeywordInput').value = value;
 }
 
-// Read and sync the full-search checkbox
 function getFullSearch() {
     var setupCb = document.getElementById('setupFullSearchCheckbox');
     var mainCb = document.getElementById('mainFullSearchCheckbox');

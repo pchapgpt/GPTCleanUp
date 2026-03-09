@@ -5,6 +5,7 @@
   "permissions": [
     "activeTab",
     "storage",
+    "unlimitedStorage",
     "webRequest"
   ],
   "host_permissions": [
