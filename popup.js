@@ -5,6 +5,10 @@ let selectedIds = new Set();
 let currentData = [];
 let pendingDeleteIds = [];
 let pendingAction = 'delete'; // 'delete' or 'archive'
+let isWorking = false; // true during fetch or archive/delete operations
+
+// Pin detection: pinned if opened as standalone window via ?pinned=true
+var isPinned = window.location.search.indexOf('pinned=true') !== -1;
 
 // Selection gesture state
 let lastClickedIndex = -1;       // For shift-click range select
@@ -98,6 +102,15 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('click', function() {
         closeSettingsMenu();
     });
+
+    // --- Pin/Unpin setup ---
+    initPinState();
+    document.getElementById('setupPinButton').addEventListener('click', function() {
+        handlePinToggle();
+    });
+    document.getElementById('mainPinButton').addEventListener('click', function() {
+        handlePinToggle();
+    });
 });
 
 // ----------------------------
@@ -151,6 +164,7 @@ function updateMainStatus() {
 var loadingTimerInterval = null;
 
 function fetchConversations() {
+    isWorking = true;
     document.getElementById('setupView').style.display = 'none';
     document.getElementById('mainView').style.display = 'none';
     document.getElementById('loading').style.display = 'block';
@@ -167,6 +181,7 @@ function fetchConversations() {
 
     chrome.storage.local.get(['apiKey'], function(result) {
         if (!result.apiKey) {
+            isWorking = false;
             clearInterval(loadingTimerInterval);
             document.getElementById('loading').style.display = 'none';
             document.getElementById('setupDesc').textContent = 'No API key found. Please reconnect.';
@@ -184,6 +199,7 @@ function fetchConversations() {
         function fetchPage() {
             if (offset > maxOffset) {
                 // Done fetching
+                isWorking = false;
                 clearInterval(loadingTimerInterval);
                 document.getElementById('loading').style.display = 'none';
                 currentData = allData;
@@ -209,6 +225,7 @@ function fetchConversations() {
                         'Loaded ' + allData.length + ' conversations...';
                     // If we got fewer items than the limit, there are no more pages
                     if (data.items.length < limit) {
+                        isWorking = false;
                         clearInterval(loadingTimerInterval);
                         document.getElementById('loading').style.display = 'none';
                         currentData = allData;
@@ -221,6 +238,7 @@ function fetchConversations() {
                 fetchPage();
             })
             .catch(function() {
+                isWorking = false;
                 clearInterval(loadingTimerInterval);
                 document.getElementById('loading').style.display = 'none';
                 if (allData.length > 0) {
@@ -491,6 +509,7 @@ function showConfirmation(action) {
 function executeAction() {
     pendingDeleteIds = Array.from(selectedIds);
     if (pendingDeleteIds.length === 0) return;
+    isWorking = true;
 
     var isArchive = (pendingAction === 'archive');
     var actionLabel = isArchive ? 'Archiving' : 'Deleting';
@@ -559,6 +578,7 @@ function executeAction() {
 }
 
 function onActionComplete(successIds, failedIds) {
+    isWorking = false;
     document.getElementById('deletionProgress').style.display = 'none';
 
     // Re-enable UI
@@ -677,6 +697,48 @@ function disconnectToken() {
         deleteMode = false;
         showSetupDisconnected();
     });
+}
+
+// ----------------------------
+// Pin / Unpin
+// ----------------------------
+
+function initPinState() {
+    var unpinSvg = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none">' +
+        '<path d="M10 1.5L6.5 5 4 4 1.5 6.5 5 10l-3.5 4.5L6 11l3.5 3.5L12 12l-1-2.5L14.5 6z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>' +
+        '<line x1="2" y1="2" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+        '</svg>';
+
+    if (isPinned) {
+        document.body.classList.add('pinned');
+        // Swap both pin buttons to show "unpin" icon + title
+        var pinButtons = [document.getElementById('setupPinButton'), document.getElementById('mainPinButton')];
+        for (var i = 0; i < pinButtons.length; i++) {
+            pinButtons[i].innerHTML = unpinSvg;
+            pinButtons[i].title = 'Unpin window';
+        }
+    }
+}
+
+function handlePinToggle() {
+    if (isPinned) {
+        // Unpin: warn if work is in progress
+        if (isWorking) {
+            if (!confirm('Closing while working will interrupt the current process. Close anyway?')) {
+                return;
+            }
+        }
+        window.close();
+    } else {
+        // Pin: open popup.html in a standalone window
+        chrome.windows.create({
+            url: chrome.runtime.getURL('popup.html?pinned=true'),
+            type: 'popup',
+            width: 360,
+            height: 540
+        });
+        window.close();
+    }
 }
 
 // ----------------------------
