@@ -9,6 +9,7 @@ let isWorking = false; // true during fetch or archive/delete operations
 
 // Pin detection: pinned if opened as standalone window via ?pinned=true
 var isPinned = window.location.search.indexOf('pinned=true') !== -1;
+var autoFetch = window.location.search.indexOf('autofetch=true') !== -1;
 
 // Selection gesture state
 let lastClickedIndex = -1;       // For shift-click range select
@@ -21,19 +22,22 @@ let dragCheckState = true;        // Whether drag is checking or unchecking
 
 document.addEventListener('DOMContentLoaded', function() {
     // Check stored state and show the right view
-    chrome.storage.local.get(['apiKey', 'apiData'], function(result) {
-        if (result.apiData && result.apiData.length > 0) {
-            // Have data — go straight to main view
-            currentData = result.apiData;
-            showMainView();
-        } else if (result.apiKey) {
-            // Have key but no data — show fetch button
-            showSetupConnected();
-        } else {
-            // Fresh install — show connect prompt
-            showSetupDisconnected();
-        }
-    });
+    // (skip if autoFetch — fetchConversations() will take over immediately)
+    if (!autoFetch) {
+        chrome.storage.local.get(['apiKey', 'apiData'], function(result) {
+            if (result.apiData && result.apiData.length > 0) {
+                // Have data — go straight to main view
+                currentData = result.apiData;
+                showMainView();
+            } else if (result.apiKey) {
+                // Have key but no data — show fetch button
+                showSetupConnected();
+            } else {
+                // Fresh install — show connect prompt
+                showSetupDisconnected();
+            }
+        });
+    }
 
     // --- Setup view listeners ---
     document.getElementById('getKeyButton').addEventListener('click', function() {
@@ -111,15 +115,32 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('mainPinButton').addEventListener('click', function() {
         handlePinToggle();
     });
+
+    // Auto-fetch if opened via pin+fetch redirect
+    if (autoFetch) {
+        fetchConversations();
+    }
 });
 
 // ----------------------------
 // View transitions
 // ----------------------------
 
+// Show/hide a top-level view. In pinned mode, uses 'visible' class
+// so that the CSS flex rules only apply when the element is actually shown.
+function showView(el) {
+    el.style.display = 'block';
+    el.classList.add('visible');
+}
+function hideView(el) {
+    el.style.display = 'none';
+    el.classList.remove('visible');
+}
+
 function showSetupDisconnected() {
-    document.getElementById('setupView').style.display = 'block';
-    document.getElementById('mainView').style.display = 'none';
+    showView(document.getElementById('setupView'));
+    hideView(document.getElementById('mainView'));
+    hideView(document.getElementById('loading'));
     document.getElementById('getKeyButton').style.display = 'flex';
     document.getElementById('fetchButton').style.display = 'none';
     document.getElementById('connectionStatus').innerHTML =
@@ -129,8 +150,9 @@ function showSetupDisconnected() {
 }
 
 function showSetupConnected() {
-    document.getElementById('setupView').style.display = 'block';
-    document.getElementById('mainView').style.display = 'none';
+    showView(document.getElementById('setupView'));
+    hideView(document.getElementById('mainView'));
+    hideView(document.getElementById('loading'));
     document.getElementById('getKeyButton').style.display = 'none';
     document.getElementById('fetchButton').style.display = 'flex';
     document.getElementById('connectionStatus').innerHTML =
@@ -140,8 +162,9 @@ function showSetupConnected() {
 }
 
 function showMainView() {
-    document.getElementById('setupView').style.display = 'none';
-    document.getElementById('mainView').style.display = 'block';
+    hideView(document.getElementById('setupView'));
+    showView(document.getElementById('mainView'));
+    hideView(document.getElementById('loading'));
     updateMainStatus();
     displayData(currentData);
 }
@@ -164,10 +187,22 @@ function updateMainStatus() {
 var loadingTimerInterval = null;
 
 function fetchConversations() {
+    // Auto-pin: if not pinned, reopen in a standalone window with autofetch
+    if (!isPinned) {
+        chrome.windows.create({
+            url: chrome.runtime.getURL('popup.html?pinned=true&autofetch=true'),
+            type: 'popup',
+            width: 360,
+            height: 540
+        });
+        window.close();
+        return;
+    }
+
     isWorking = true;
-    document.getElementById('setupView').style.display = 'none';
-    document.getElementById('mainView').style.display = 'none';
-    document.getElementById('loading').style.display = 'block';
+    hideView(document.getElementById('setupView'));
+    hideView(document.getElementById('mainView'));
+    showView(document.getElementById('loading'));
     document.getElementById('loadingCount').textContent = 'Loading conversations...';
     document.getElementById('loadingTimer').textContent = '0s elapsed';
 
@@ -183,7 +218,7 @@ function fetchConversations() {
         if (!result.apiKey) {
             isWorking = false;
             clearInterval(loadingTimerInterval);
-            document.getElementById('loading').style.display = 'none';
+            hideView(document.getElementById('loading'));
             document.getElementById('setupDesc').textContent = 'No API key found. Please reconnect.';
             document.getElementById('setupHint').textContent = '';
             showSetupDisconnected();
@@ -201,7 +236,7 @@ function fetchConversations() {
                 // Done fetching
                 isWorking = false;
                 clearInterval(loadingTimerInterval);
-                document.getElementById('loading').style.display = 'none';
+                hideView(document.getElementById('loading'));
                 currentData = allData;
                 chrome.storage.local.set({apiData: allData}, function() {});
                 showMainView();
@@ -227,7 +262,7 @@ function fetchConversations() {
                     if (data.items.length < limit) {
                         isWorking = false;
                         clearInterval(loadingTimerInterval);
-                        document.getElementById('loading').style.display = 'none';
+                        hideView(document.getElementById('loading'));
                         currentData = allData;
                         chrome.storage.local.set({apiData: allData}, function() {});
                         showMainView();
@@ -240,17 +275,16 @@ function fetchConversations() {
             .catch(function() {
                 isWorking = false;
                 clearInterval(loadingTimerInterval);
-                document.getElementById('loading').style.display = 'none';
+                hideView(document.getElementById('loading'));
                 if (allData.length > 0) {
                     // Partial success — use what we got
                     currentData = allData;
                     chrome.storage.local.set({apiData: allData}, function() {});
                     showMainView();
                 } else {
+                    showSetupDisconnected();
                     document.getElementById('setupDesc').textContent = 'Failed to load. Try reconnecting.';
                     document.getElementById('setupHint').textContent = '';
-                    document.getElementById('getKeyButton').style.display = 'flex';
-                    document.getElementById('fetchButton').style.display = 'none';
                     document.getElementById('connectionStatus').innerHTML =
                         '<span class="status-dot disconnected"></span>Connection expired';
                 }
@@ -558,6 +592,12 @@ function executeAction() {
             .then(function(response) {
                 if (response.ok) {
                     successIds.push(id);
+                    // Remove from cached data immediately
+                    currentData = currentData.filter(function(item) {
+                        return item.id !== id;
+                    });
+                    selectedIds.delete(id);
+                    chrome.storage.local.set({apiData: currentData}, function() {});
                 } else {
                     failedIds.push(id);
                 }
@@ -589,16 +629,8 @@ function onActionComplete(successIds, failedIds) {
     var isArchive = (pendingAction === 'archive');
     var actionPast = isArchive ? 'archived' : 'deleted';
 
-    // Remove successfully processed items from cached data
-    if (successIds.length > 0) {
-        var successSet = new Set(successIds);
-        currentData = currentData.filter(function(item) {
-            return !successSet.has(item.id);
-        });
-        chrome.storage.local.set({apiData: currentData}, function() {});
-    }
-
-    // Clear selections
+    // Successful items already removed incrementally during processing.
+    // Clear remaining selections (failed items).
     selectedIds.clear();
 
     // Update count and re-render
