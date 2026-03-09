@@ -5,6 +5,11 @@ let selectedIds = new Set();
 let currentData = [];
 let pendingDeleteIds = [];
 
+// Selection gesture state
+let lastClickedIndex = -1;       // For shift-click range select
+let isDragging = false;           // For drag select
+let dragCheckState = true;        // Whether drag is checking or unchecking
+
 // ----------------------------
 // Initialization
 // ----------------------------
@@ -110,19 +115,24 @@ function renderResultsAsBrowse(items) {
 }
 
 function renderResultsAsDelete(items) {
+    lastClickedIndex = -1;
+    isDragging = false;
+
     if (items.length > 0) {
-        var output = items.map(function(item) {
+        var output = items.map(function(item, idx) {
             var checked = selectedIds.has(item.id) ? ' checked' : '';
             var safeTitle = escapeHtml(item.title || 'Untitled');
-            return '<div class="checkbox-item">' +
-                '<input type="checkbox" id="chk_' + item.id + '" data-id="' + item.id + '"' + checked + '>' +
+            return '<div class="checkbox-item" data-index="' + idx + '">' +
+                '<input type="checkbox" id="chk_' + item.id + '" data-id="' + item.id + '" data-index="' + idx + '"' + checked + '>' +
                 '<label for="chk_' + item.id + '">' + safeTitle + '</label>' +
                 '</div>';
         }).join('');
         document.getElementById('result').innerHTML = output;
 
-        // Attach checkbox listeners
-        var checkboxes = document.querySelectorAll('#result input[type="checkbox"]');
+        var resultEl = document.getElementById('result');
+        var checkboxes = resultEl.querySelectorAll('input[type="checkbox"]');
+
+        // --- Individual checkbox change (keeps selectedIds in sync) ---
         for (var i = 0; i < checkboxes.length; i++) {
             checkboxes[i].addEventListener('change', function() {
                 var id = this.getAttribute('data-id');
@@ -134,10 +144,96 @@ function renderResultsAsDelete(items) {
                 updateSelectionCounter();
             });
         }
+
+        // --- Shift-click range selection ---
+        for (var i = 0; i < checkboxes.length; i++) {
+            (function(idx) {
+                checkboxes[idx].addEventListener('click', function(e) {
+                    var currentIndex = idx;
+
+                    if (e.shiftKey && lastClickedIndex !== -1 && lastClickedIndex !== currentIndex) {
+                        // Prevent the default toggle — we'll handle it manually
+                        e.preventDefault();
+
+                        var start = Math.min(lastClickedIndex, currentIndex);
+                        var end = Math.max(lastClickedIndex, currentIndex);
+                        // Use the state of the anchor checkbox to decide check/uncheck
+                        var anchorChecked = checkboxes[lastClickedIndex].checked;
+
+                        for (var j = start; j <= end; j++) {
+                            setCheckbox(checkboxes[j], anchorChecked);
+                        }
+                        updateSelectionCounter();
+                    }
+
+                    lastClickedIndex = currentIndex;
+                });
+            })(i);
+        }
+
+        // --- Drag selection ---
+        // Prevent ALL native checkbox/label toggle — we manage state manually
+        // via setCheckbox(). This avoids race conditions between mousedown
+        // (where we set dragCheckState) and the deferred native click toggle.
+        resultEl.addEventListener('click', function(e) {
+            var target = e.target;
+            if (target.type === 'checkbox' || target.tagName === 'LABEL') {
+                e.preventDefault();
+            }
+        });
+
+        var rows = resultEl.querySelectorAll('.checkbox-item');
+        for (var i = 0; i < rows.length; i++) {
+            (function(row) {
+                row.addEventListener('mousedown', function(e) {
+                    // Only start drag on left-click, ignore if shift is held (that's range select)
+                    if (e.button !== 0 || e.shiftKey) return;
+                    e.preventDefault(); // prevent text selection
+
+                    isDragging = true;
+                    var cb = row.querySelector('input[type="checkbox"]');
+                    setCheckbox(cb, !cb.checked);
+                    dragCheckState = cb.checked;
+                    updateSelectionCounter();
+                });
+
+                row.addEventListener('mouseenter', function() {
+                    if (!isDragging) return;
+                    var cb = row.querySelector('input[type="checkbox"]');
+                    setCheckbox(cb, dragCheckState);
+                    updateSelectionCounter();
+                });
+            })(rows[i]);
+        }
+
+        // End drag on mouseup anywhere
+        document.addEventListener('mouseup', onDragEnd);
+        // Prevent text selection while dragging inside results
+        resultEl.addEventListener('selectstart', function(e) {
+            if (isDragging) e.preventDefault();
+        });
     } else {
         document.getElementById('result').innerHTML = "No matching data found.";
     }
     updateSelectionCounter();
+}
+
+// Helper: set a checkbox to a specific state and sync selectedIds
+function setCheckbox(checkbox, checked) {
+    checkbox.checked = checked;
+    var id = checkbox.getAttribute('data-id');
+    if (checked) {
+        selectedIds.add(id);
+    } else {
+        selectedIds.delete(id);
+    }
+}
+
+function onDragEnd() {
+    if (isDragging) {
+        isDragging = false;
+        updateSelectionCounter();
+    }
 }
 
 // ----------------------------
@@ -243,39 +339,67 @@ function executeDelete() {
     document.getElementById('browseButton').disabled = true;
     document.getElementById('searchInput').disabled = true;
     document.getElementById('deletionProgress').style.display = 'block';
-    document.getElementById('deletionStatus').textContent = 'Starting deletion of ' + pendingDeleteIds.length + ' conversation(s)...';
+    document.getElementById('deletionStatus').textContent =
+        'Deleting 0 of ' + pendingDeleteIds.length + '...';
 
-    chrome.runtime.sendMessage(
-        {action: "deleteConversations", conversationIds: pendingDeleteIds},
-        function(response) {
-            onDeletionComplete(response);
+    // Perform deletion directly from the popup — no background message passing.
+    // The popup has the same host_permissions and can fetch chatgpt.com directly.
+    chrome.storage.local.get(['apiKey'], function(result) {
+        if (!result.apiKey) {
+            onDeletionComplete([], pendingDeleteIds);
+            return;
         }
-    );
+
+        var apiKey = result.apiKey;
+        var deletedIds = [];
+        var failedIds = [];
+
+        function deleteNext(index) {
+            if (index >= pendingDeleteIds.length) {
+                onDeletionComplete(deletedIds, failedIds);
+                return;
+            }
+
+            var id = pendingDeleteIds[index];
+            var url = 'https://chatgpt.com/backend-api/conversation/' + id;
+
+            fetch(url, {
+                method: 'PATCH',
+                headers: new Headers({
+                    'Authorization': apiKey,
+                    'Content-Type': 'application/json'
+                }),
+                body: JSON.stringify({ is_visible: false })
+            })
+            .then(function(response) {
+                if (response.ok) {
+                    deletedIds.push(id);
+                } else {
+                    failedIds.push(id);
+                }
+            })
+            .catch(function() {
+                failedIds.push(id);
+            })
+            .then(function() {
+                var completed = deletedIds.length + failedIds.length;
+                document.getElementById('deletionStatus').textContent =
+                    'Deleting ' + completed + ' of ' + pendingDeleteIds.length + '...';
+                deleteNext(index + 1);
+            });
+        }
+
+        deleteNext(0);
+    });
 }
 
-// Listen for progress updates from background
-chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-    if (request.action === "deletionProgress") {
-        document.getElementById('deletionStatus').textContent =
-            'Deleting ' + request.completed + ' of ' + request.total + '...';
-    }
-});
-
-function onDeletionComplete(response) {
+function onDeletionComplete(deletedIds, failedIds) {
     document.getElementById('deletionProgress').style.display = 'none';
 
     // Re-enable UI
     document.getElementById('selectAllButton').disabled = false;
     document.getElementById('browseButton').disabled = false;
     document.getElementById('searchInput').disabled = false;
-
-    if (!response) {
-        alert('Deletion failed: no response from background.');
-        return;
-    }
-
-    var deletedIds = response.deletedIds || [];
-    var failedIds = response.failedIds || [];
 
     // Remove successfully deleted items from cached data
     if (deletedIds.length > 0) {
