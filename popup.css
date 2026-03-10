@@ -210,11 +210,29 @@ body {
     color: #666;
 }
 
+/* --- Cleanup mode: flex layout to anchor actions at bottom --- */
+#mainView.cleanup-active {
+    display: flex !important;
+    flex-direction: column;
+    max-height: 540px;
+}
+body.pinned #mainView.cleanup-active {
+    max-height: none;
+    flex: 1;
+    min-height: 0;
+}
+#mainView.cleanup-active .results-container {
+    flex: 1;
+    min-height: 60px;
+    max-height: none;
+}
+
 /* --- Bottom action buttons (archive + delete) --- */
 #cleanupActions {
     margin-top: auto;
     flex-shrink: 0;
     padding: 4px 0 0;
+    background-color: #212121;
 }
 .cleanup-actions-row {
     display: flex;

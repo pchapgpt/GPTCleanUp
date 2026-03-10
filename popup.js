@@ -269,6 +269,43 @@ function updateMainStatus() {
 }
 
 // ----------------------------
+// Network Debug Logger
+// ----------------------------
+
+var _requestCounter = 0;
+
+function debugFetch(url, options) {
+    var reqId = ++_requestCounter;
+    var method = (options && options.method) || 'GET';
+    var startMs = Date.now();
+
+    console.log('[GPTCleanUp] #' + reqId + ' ' + method + ' ' + url);
+    if (options && options.body) {
+        console.log('[GPTCleanUp] #' + reqId + ' Body:', options.body);
+    }
+
+    return fetch(url, options).then(function(response) {
+        var elapsed = Date.now() - startMs;
+        var status = response.status + ' ' + response.statusText;
+        console.log('[GPTCleanUp] #' + reqId + ' ' + status + ' (' + elapsed + 'ms)');
+
+        // Clone so we can read body for logging without consuming it
+        var clone = response.clone();
+        clone.text().then(function(text) {
+            // Log first 800 chars of response body
+            var preview = text.length > 800 ? text.substring(0, 800) + '...' : text;
+            console.log('[GPTCleanUp] #' + reqId + ' Response:', preview);
+        }).catch(function() {});
+
+        return response;
+    }).catch(function(err) {
+        var elapsed = Date.now() - startMs;
+        console.error('[GPTCleanUp] #' + reqId + ' FAILED (' + elapsed + 'ms):', err);
+        throw err;
+    });
+}
+
+// ----------------------------
 // Reload from IndexedDB (after upsert/delete/archive)
 // ----------------------------
 
@@ -336,11 +373,11 @@ function fetchConversations(keyword, fullSearch) {
         var allData = [];
         var timedOut = false;
 
-        // 60-second timeout
+        // 5-minute timeout (allows fetching thousands of conversations)
         var fetchTimeout = setTimeout(function() {
             timedOut = true;
             finishFetch(allData, true);
-        }, 60000);
+        }, 300000);
 
         function finishFetch(data, partial) {
             clearTimeout(fetchTimeout);
@@ -355,7 +392,7 @@ function fetchConversations(keyword, fullSearch) {
                 }).then(function() {
                     showMainView();
                     if (partial) {
-                        alert('Loading stopped after 60 seconds. Showing ' + currentData.length + ' conversations.');
+                        alert('Loading timed out. ' + currentData.length + ' conversations saved so far. You can fetch more later.');
                     }
                 });
             } else {
@@ -404,7 +441,7 @@ function fetchConversations(keyword, fullSearch) {
                 var url = 'https://chatgpt.com/backend-api/conversations/search?query=' + encodeURIComponent(keyword) + '&limit=' + searchLimit;
                 if (cursor) url += '&cursor=' + encodeURIComponent(cursor);
 
-                fetch(url, {
+                debugFetch(url, {
                     method: 'GET',
                     headers: new Headers({
                         'Authorization': apiKey,
@@ -414,12 +451,12 @@ function fetchConversations(keyword, fullSearch) {
                 .then(function(response) { return response.json(); })
                 .then(function(data) {
                     if (timedOut) return;
-                    console.log('[GPTCleanUp] Search response:', JSON.stringify(data).substring(0, 500));
                     var items = data && data.items ? data.items : (data && Array.isArray(data) ? data : []);
+                    console.log('[GPTCleanUp] Search page: ' + items.length + ' items, cursor=' + (data && data.cursor ? 'yes' : 'no'));
                     if (items.length > 0) {
                         var normalized = items.map(normalizeItem);
-                        console.log('[GPTCleanUp] First raw item keys:', Object.keys(items[0]).join(', '));
-                        console.log('[GPTCleanUp] First normalized item:', JSON.stringify(normalized[0]));
+                        console.log('[GPTCleanUp] First item keys:', Object.keys(items[0]).join(', '));
+                        console.log('[GPTCleanUp] First normalized:', JSON.stringify(normalized[0]));
                         allData = allData.concat(normalized);
                         document.getElementById('loadingCount').textContent =
                             'Found ' + allData.length + ' conversations...';
@@ -442,21 +479,15 @@ function fetchConversations(keyword, fullSearch) {
         } else if (keyword && !fullSearch) {
             // --- Title-only search: load all and filter by title ---
             var limit = 100;
-            var maxOffset = 1000;
             var offset = 0;
             var kw = keyword.toLowerCase();
 
             function fetchTitlePage() {
                 if (timedOut) return;
 
-                if (offset > maxOffset) {
-                    finishFetch(allData, false);
-                    return;
-                }
-
                 var url = 'https://chatgpt.com/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated';
 
-                fetch(url, {
+                debugFetch(url, {
                     method: 'GET',
                     headers: new Headers({
                         'Authorization': apiKey,
@@ -497,20 +528,14 @@ function fetchConversations(keyword, fullSearch) {
         } else {
             // --- Load all: paginate the conversations list endpoint ---
             var limit = 100;
-            var maxOffset = 1000;
             var offset = 0;
 
             function fetchPage() {
                 if (timedOut) return;
 
-                if (offset > maxOffset) {
-                    finishFetch(allData, false);
-                    return;
-                }
-
                 var url = 'https://chatgpt.com/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated';
 
-                fetch(url, {
+                debugFetch(url, {
                     method: 'GET',
                     headers: new Headers({
                         'Authorization': apiKey,
@@ -642,7 +667,7 @@ function fetchDateRange(startTime, endTime, loadingMsg) {
         var fetchTimeout = setTimeout(function() {
             timedOut = true;
             finishRangeFetch(allData, true);
-        }, 120000); // 2 min timeout for range fetches
+        }, 300000); // 5 min timeout for range fetches
 
         function finishRangeFetch(data, partial) {
             clearTimeout(fetchTimeout);
@@ -656,7 +681,7 @@ function fetchDateRange(startTime, endTime, loadingMsg) {
                 }).then(function() {
                     showMainView();
                     if (partial) {
-                        alert('Loading stopped after timeout. ' + data.length + ' conversations saved.');
+                        alert('Loading timed out. ' + data.length + ' conversations saved so far. You can fetch more later.');
                     }
                 });
             } else {
@@ -674,7 +699,6 @@ function fetchDateRange(startTime, endTime, loadingMsg) {
         // Paginate through conversations, keeping only those in the date range
         var limit = 100;
         var offset = 0;
-        var maxOffset = 5000; // Allow scanning more for date range fetches
         var foundInRange = 0;
         var passedRange = false; // Optimization: stop if we've gone past the range
 
@@ -684,14 +708,9 @@ function fetchDateRange(startTime, endTime, loadingMsg) {
                 return;
             }
 
-            if (offset > maxOffset) {
-                finishRangeFetch(allData, false);
-                return;
-            }
-
             var url = 'https://chatgpt.com/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated';
 
-            fetch(url, {
+            debugFetch(url, {
                 method: 'GET',
                 headers: new Headers({
                     'Authorization': apiKey,
@@ -893,6 +912,7 @@ function toggleCleanupMode(on) {
     deleteMode = on;
     selectedIds.clear();
 
+    document.getElementById('mainView').classList.toggle('cleanup-active', on);
     document.getElementById('browseToolbar').style.display = on ? 'none' : 'block';
     document.getElementById('cleanupToolbar').style.display = on ? 'block' : 'none';
     document.getElementById('cleanupActions').style.display = on ? 'block' : 'none';
@@ -1030,7 +1050,7 @@ function executeAction() {
             var id = pendingDeleteIds[index];
             var url = 'https://chatgpt.com/backend-api/conversation/' + id;
 
-            fetch(url, {
+            debugFetch(url, {
                 method: 'PATCH',
                 headers: new Headers({
                     'Authorization': apiKey,

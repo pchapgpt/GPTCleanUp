@@ -27,7 +27,7 @@
             </div>
             <div class="setup-divider"><span>or</span></div>
             <button id="loadAllButton" class="button button-primary">Load All Conversations</button>
-            <p class="setup-step">Loads up to 1,000 most recent conversations</p>
+            <p class="setup-step">Loads all conversations (may take a few minutes)</p>
         </div>
         <div id="connectionStatus"></div>
         <p class="setup-step" id="setupHint">Open chatgpt.com, then click Connect.</p>
@@ -85,7 +85,7 @@
                 <button class="quick-fetch-btn" id="fetchThisYear">This Year</button>
                 <button class="quick-fetch-btn" id="fetchOlder">Older...</button>
             </div>
-            <button id="cleanupModeButton" class="button button-subtle">Cleanup Mode</button>
+            <button id="cleanupModeButton" class="button-inline" style="margin: 4px 0; color: #888;">Cleanup Mode</button>
         </div>
 
         <!-- Cleanup mode toolbar (hidden by default) -->
@@ -128,7 +128,7 @@
         <p id="loadingCount">Loading conversations...</p>
         <p id="loadingTimer">0s elapsed</p>
         <p id="loadingWarning">Keep this window open</p>
-        <p id="loadingWarningDetail">Loading 1000+ conversations can take &gt; 60 sec</p>
+        <p id="loadingWarningDetail">Large histories may take several minutes</p>
     </div>
 
     <!-- Confirmation modal -->
