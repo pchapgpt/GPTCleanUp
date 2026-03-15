@@ -39,17 +39,6 @@
         <div id="mainStatus">
             <span id="mainConnectionDot" class="status-dot connected"></span>
             <span id="mainConversationCount"></span>
-            <button id="fetchButton2" class="icon-button" title="Refresh History">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M13.5 8a5.5 5.5 0 0 1-9.7 3.5M2.5 8a5.5 5.5 0 0 1 9.7-3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                    <path d="M3 14v-3h3M13 2v3h-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </button>
-            <button id="toggleAnalyticsButton" class="icon-button" title="Toggle insights">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M2 13v-3m3 3v-5m3 5V5m3 8v-4m3 4V7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                </svg>
-            </button>
             <button id="mainPinButton" class="pin-button" title="Pin window">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                     <path d="M10 1.5L6.5 5 4 4 1.5 6.5 5 10l-3.5 4.5L6 11l3.5 3.5L12 12l-1-2.5L14.5 6z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
@@ -68,27 +57,7 @@
             </div>
         </div>
 
-        <!-- Browse mode toolbar -->
-        <div id="browseToolbar">
-            <div class="keyword-row">
-                <input type="text" id="mainKeywordInput" class="keyword-input" placeholder="Keyword filter (optional)">
-                <button id="keywordFetchButton" class="button-inline" title="Reload with keyword">Load</button>
-            </div>
-            <label class="search-option-row">
-                <input type="checkbox" id="mainFullSearchCheckbox">
-                <span>Search full conversation</span>
-            </label>
-            <div id="quickFetchRow" class="quick-fetch-row">
-                <span class="quick-fetch-label">Fetch:</span>
-                <button class="quick-fetch-btn" id="fetchThisMonth">This Month</button>
-                <button class="quick-fetch-btn" id="fetchThisQuarter">This Quarter</button>
-                <button class="quick-fetch-btn" id="fetchThisYear">This Year</button>
-                <button class="quick-fetch-btn" id="fetchOlder">Older...</button>
-            </div>
-            <button id="cleanupModeButton" class="button-inline" style="margin: 4px 0; color: #888;">Cleanup Mode</button>
-        </div>
-
-        <!-- Cleanup mode toolbar (hidden by default) -->
+        <!-- Cleanup mode toolbar (hidden by default, replaces status bar) -->
         <div id="cleanupToolbar" style="display: none;">
             <div class="cleanup-toolbar-row">
                 <button id="browseButton" class="button-inline">&larr; Back</button>
@@ -97,16 +66,38 @@
             </div>
         </div>
 
+        <!-- Unified search input -->
+        <input type="text" id="searchInput" placeholder="Search conversations...">
+
+        <!-- Options row: full-search toggle + fetch pills + refresh -->
+        <div id="optionsRow" class="options-row">
+            <label class="full-search-toggle">
+                <input type="checkbox" id="mainFullSearchCheckbox">
+                <span>Full content</span>
+            </label>
+            <div class="fetch-pills">
+                <button class="fetch-pill" id="fetchThisMonth" title="Fetch this month">Month</button>
+                <button class="fetch-pill" id="fetchThisQuarter" title="Fetch this quarter">Qtr</button>
+                <button class="fetch-pill" id="fetchThisYear" title="Fetch this year">Year</button>
+                <button class="fetch-pill" id="fetchOlder" title="Fetch older conversations">Older</button>
+                <button class="fetch-pill fetch-pill-icon" id="fetchRefresh" title="Re-fetch all conversations">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                        <path d="M13.5 8a5.5 5.5 0 0 1-9.7 3.5M2.5 8a5.5 5.5 0 0 1 9.7-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        <path d="M3 14v-3h3M13 2v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
         <!-- Analytics section (hidden by default, toggled via insights button) -->
         <div id="analyticsSection" class="analytics-section" style="display: none;">
             <div class="analytics-header">
                 <span>Insights</span>
+                <button id="analyticsClose" class="analytics-close" title="Close insights">&times;</button>
             </div>
             <div id="frequencyChartContainer" class="freq-chart-container"></div>
             <div id="wordCloudContainer" class="word-cloud-container"></div>
         </div>
-
-        <input type="text" id="searchInput" placeholder="Filter loaded conversations...">
 
         <div id="deletionProgress">
             <p class="progress-title" id="progressTitle">Processing...</p>
@@ -115,6 +106,23 @@
 
         <div id="result" class="results-container"></div>
 
+        <!-- Bottom action bar (browse mode) -->
+        <div id="bottomBar" class="bottom-bar">
+            <button id="toggleAnalyticsButton" class="bottom-bar-btn" title="Toggle insights">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path d="M2 13v-3m3 3v-5m3 5V5m3 8v-4m3 4V7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+                Insights
+            </button>
+            <button id="cleanupModeButton" class="bottom-bar-btn" title="Select conversations to archive or delete">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path d="M2 4h12M5.5 4V2.5h5V4M3 4v9.5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Cleanup
+            </button>
+        </div>
+
+        <!-- Cleanup actions (hidden by default, replaces bottom bar) -->
         <div id="cleanupActions" style="display: none;">
             <div class="cleanup-actions-row">
                 <button id="archiveSelectedButton" class="button-action button-action-archive" disabled>Archive</button>

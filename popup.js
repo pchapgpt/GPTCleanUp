@@ -79,23 +79,16 @@ document.addEventListener('DOMContentLoaded', function() {
         displayData(currentData, document.getElementById('searchInput').value);
     });
 
-    document.getElementById('fetchButton2').addEventListener('click', function() {
+    document.getElementById('fetchRefresh').addEventListener('click', function() {
         fetchConversations(getKeyword(), getFullSearch());
     });
 
-    document.getElementById('keywordFetchButton').addEventListener('click', function() {
-        fetchConversations(getKeyword(), getFullSearch());
-    });
-
-    // Allow Enter key in keyword inputs to trigger fetch
+    // Allow Enter key in setup keyword input to trigger fetch
     document.getElementById('setupKeywordInput').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
             var kw = document.getElementById('setupKeywordInput').value.trim();
             if (kw) fetchConversations(kw, getFullSearch());
         }
-    });
-    document.getElementById('mainKeywordInput').addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') fetchConversations(getKeyword(), getFullSearch());
     });
 
     document.getElementById('cleanupModeButton').addEventListener('click', function() {
@@ -157,16 +150,26 @@ document.addEventListener('DOMContentLoaded', function() {
         handlePinToggle();
     });
 
-    // --- Analytics toggle ---
+    // --- Analytics toggle (bottom bar button) ---
     document.getElementById('toggleAnalyticsButton').addEventListener('click', function() {
         analyticsVisible = !analyticsVisible;
         var section = document.getElementById('analyticsSection');
+        var btn = document.getElementById('toggleAnalyticsButton');
         if (analyticsVisible) {
             updateAnalytics(currentData);
             section.style.display = 'block';
+            btn.classList.add('active');
         } else {
             section.style.display = 'none';
+            btn.classList.remove('active');
         }
+    });
+
+    // --- Analytics close button ---
+    document.getElementById('analyticsClose').addEventListener('click', function() {
+        analyticsVisible = false;
+        document.getElementById('analyticsSection').style.display = 'none';
+        document.getElementById('toggleAnalyticsButton').classList.remove('active');
     });
 
     // --- Quick fetch buttons ---
@@ -377,7 +380,7 @@ function fetchConversations(keyword, fullSearch) {
         var fetchTimeout = setTimeout(function() {
             timedOut = true;
             finishFetch(allData, true);
-        }, 300000);
+        }, 600000);
 
         function finishFetch(data, partial) {
             clearTimeout(fetchTimeout);
@@ -667,7 +670,7 @@ function fetchDateRange(startTime, endTime, loadingMsg) {
         var fetchTimeout = setTimeout(function() {
             timedOut = true;
             finishRangeFetch(allData, true);
-        }, 300000); // 5 min timeout for range fetches
+        }, 600000); // 5 min timeout for range fetches
 
         function finishRangeFetch(data, partial) {
             clearTimeout(fetchTimeout);
@@ -912,16 +915,17 @@ function toggleCleanupMode(on) {
     deleteMode = on;
     selectedIds.clear();
 
-    document.getElementById('mainView').classList.toggle('cleanup-active', on);
-    document.getElementById('browseToolbar').style.display = on ? 'none' : 'block';
-    document.getElementById('cleanupToolbar').style.display = on ? 'block' : 'none';
+    // Swap between browse and cleanup UI
+    document.getElementById('mainStatus').style.display = on ? 'none' : '';
+    document.getElementById('optionsRow').style.display = on ? 'none' : '';
+    document.getElementById('bottomBar').style.display = on ? 'none' : '';
+    document.getElementById('cleanupToolbar').style.display = on ? 'flex' : 'none';
     document.getElementById('cleanupActions').style.display = on ? 'block' : 'none';
-    document.getElementById('fetchButton2').style.display = on ? 'none' : '';
-    document.getElementById('toggleAnalyticsButton').style.display = on ? 'none' : '';
-    document.getElementById('settingsWrapper').style.display = on ? 'none' : '';
     document.getElementById('deletionProgress').style.display = 'none';
     if (on) {
         document.getElementById('analyticsSection').style.display = 'none';
+        document.getElementById('toggleAnalyticsButton').classList.remove('active');
+        analyticsVisible = false;
     }
     closeSettingsMenu();
 
@@ -1243,19 +1247,16 @@ function handlePinToggle() {
 
 function getKeyword() {
     var setupInput = document.getElementById('setupKeywordInput');
-    var mainInput = document.getElementById('mainKeywordInput');
-    if (document.getElementById('mainView').style.display !== 'none' && mainInput.value.trim()) {
-        return mainInput.value.trim();
+    var searchInput = document.getElementById('searchInput');
+    if (document.getElementById('mainView').style.display !== 'none' && searchInput.value.trim()) {
+        return searchInput.value.trim();
     }
-    if (setupInput.value.trim()) {
-        return setupInput.value.trim();
-    }
-    return mainInput.value.trim() || '';
+    return setupInput.value.trim() || '';
 }
 
 function syncKeyword(value) {
     document.getElementById('setupKeywordInput').value = value;
-    document.getElementById('mainKeywordInput').value = value;
+    document.getElementById('searchInput').value = value;
 }
 
 function getFullSearch() {

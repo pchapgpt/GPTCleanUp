@@ -210,21 +210,24 @@ body {
     color: #666;
 }
 
-/* --- Cleanup mode: flex layout to anchor actions at bottom --- */
-#mainView.cleanup-active {
+/* --- Main view: flex column layout (anchors bottom bar/actions) --- */
+#mainView.visible {
     display: flex !important;
     flex-direction: column;
     max-height: 540px;
 }
-body.pinned #mainView.cleanup-active {
-    max-height: none;
-    flex: 1;
-    min-height: 0;
-}
-#mainView.cleanup-active .results-container {
+#mainView .results-container {
     flex: 1;
     min-height: 60px;
     max-height: none;
+}
+#mainView #searchInput,
+#mainView #optionsRow,
+#mainView #cleanupToolbar,
+#mainView #mainStatus,
+#mainView #analyticsSection,
+#mainView #deletionProgress {
+    flex-shrink: 0;
 }
 
 /* --- Bottom action buttons (archive + delete) --- */
@@ -633,22 +636,7 @@ body.pinned #mainView.cleanup-active {
     width: calc(100% - 8px);
     margin: 3px auto;
 }
-.keyword-row {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-    margin: 2px 0;
-}
-.keyword-row .keyword-input {
-    flex: 1;
-    margin: 0;
-}
-.keyword-row .button-inline {
-    flex-shrink: 0;
-    padding: 6px 10px;
-    font-weight: 600;
-    color: #10a37f;
-}
+/* search-option-row: used in setup view */
 .search-option-row {
     display: flex;
     align-items: center;
@@ -722,9 +710,8 @@ body.pinned {
     flex-direction: column;
 }
 body.pinned #mainView.visible {
-    display: flex;
     flex: 1;
-    flex-direction: column;
+    max-height: none;
     min-height: 0;
 }
 body.pinned .results-container {
@@ -745,20 +732,59 @@ body.pinned #loading.visible {
     justify-content: center;
 }
 
-/* --- Quick Fetch Row --- */
-.quick-fetch-row {
+/* --- Options Row (full-search toggle + fetch pills) --- */
+.options-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 4px;
+    margin: 2px 0;
+}
+.full-search-toggle {
     display: flex;
     align-items: center;
     gap: 4px;
-    margin: 4px 0;
-    padding: 0 2px;
-}
-.quick-fetch-label {
     font-size: 11px;
-    color: #666;
-    margin-right: 2px;
+    color: #888;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    white-space: nowrap;
 }
-.quick-fetch-btn {
+.full-search-toggle input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #555;
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    flex-shrink: 0;
+    position: relative;
+    transition: all 0.15s;
+}
+.full-search-toggle input[type="checkbox"]:checked {
+    background-color: #10a37f;
+    border-color: #10a37f;
+}
+.full-search-toggle input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 0px;
+    width: 4px;
+    height: 8px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+.fetch-pills {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+.fetch-pill {
     padding: 3px 8px;
     border: 1px solid #3a3a3a;
     border-radius: 12px;
@@ -770,15 +796,58 @@ body.pinned #loading.visible {
     white-space: nowrap;
     transition: all 0.15s;
 }
-.quick-fetch-btn:hover {
+.fetch-pill:hover {
     background-color: #2f2f2f;
     color: #ececec;
     border-color: #555;
 }
-.quick-fetch-btn.active {
+.fetch-pill.active {
     background-color: rgba(16, 163, 127, 0.15);
     color: #10a37f;
     border-color: #10a37f;
+}
+.fetch-pill-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 5px;
+}
+
+/* --- Bottom Action Bar (browse mode) --- */
+.bottom-bar {
+    display: flex;
+    gap: 8px;
+    padding: 6px 0 2px;
+    margin-top: auto;
+    flex-shrink: 0;
+    background-color: #212121;
+}
+.bottom-bar-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 34px;
+    padding: 6px 12px;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    background: transparent;
+    color: #888;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.bottom-bar-btn:hover {
+    background-color: #2f2f2f;
+    color: #ececec;
+    border-color: #555;
+}
+.bottom-bar-btn.active {
+    background-color: rgba(16, 163, 127, 0.1);
+    color: #10a37f;
+    border-color: rgba(16, 163, 127, 0.3);
 }
 
 /* --- Analytics Section --- */
@@ -800,6 +869,25 @@ body.pinned #loading.visible {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: #666;
+}
+.analytics-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #666;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+.analytics-close:hover {
+    background-color: #2f2f2f;
+    color: #ececec;
 }
 
 /* --- Frequency Chart --- */
